@@ -5,7 +5,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-Current release: 0.6.1 (build 0147).
+Current release: 0.6.5 (build 0148).
 
 ### Added
 - **Terrain brush (new Terrain Brush tool window).** Pick a ground (Mud, Rock, Sand or Vegetation) and left-drag on the map. The edges where it meets other ground are filled in with the game's own transition tiles, so mud, rock and sand blend smoothly.
