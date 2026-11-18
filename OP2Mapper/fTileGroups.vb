@@ -35,6 +35,10 @@ Public Class fTileGroups
         MyBase.WndProc(m)
     End Sub
 
+    ''' <summary>
+    ''' Win32 RECT (screen coordinates) as passed in the WM_MOVING lParam;
+    ''' read, adjusted for snapping, then written back.
+    ''' </summary>
     <Runtime.InteropServices.StructLayout(Runtime.InteropServices.LayoutKind.Sequential)>
     Private Structure RECT
         Public Left As Integer
@@ -441,8 +445,9 @@ Public Class fTileGroups
 
             lblWidth.Text = TileGroupWidth
             lblHeight.Text = TileGroupHeight
-            lblTileset.Text = TileSetName
-            lblTileGroupName.Text = TileGroupName
+            ' Header fields are optional; show "N/A" for any that are missing
+            lblTileset.Text = If(TileSetName = "", "N/A", TileSetName)
+            lblTileGroupName.Text = If(TileGroupName = "", "N/A", TileGroupName)
 
             If TileGroupNotes = "" Then
                 'Debug.WriteLine("No Notes")
@@ -537,18 +542,21 @@ Public Class fTileGroups
             ' Parse JSON
             currentTileGroupData = JObject.Parse(jsonText)
 
-            ' Extract header information
-            If currentTileGroupData.ContainsKey("header") Then
-                Dim header = currentTileGroupData("header")
-                TileGroupWidth = header("width").Value(Of Integer)()
-                TileGroupHeight = header("height").Value(Of Integer)()
-                TileSetName = header("tileset").Value(Of String)()
-                TileGroupName = header("name").Value(Of String)()
-                TileGroupBmp = header("bmp").Value(Of String)()
-                TileGroupNotes = header("notes").Value(Of String)()
+            ' Extract header information. Every header field is optional: only
+            ' "tiles" is needed to place a group, and width/height are taken
+            ' from the tiles data below anyway. Previously any missing field
+            ' (e.g. "notes" in an older or hand-written file) threw and the
+            ' whole group was rejected.
+            Dim header As JObject = TryCast(currentTileGroupData("header"), JObject)
+            If header IsNot Nothing Then
+                TileGroupWidth = GetHeaderInteger(header, "width")
+                TileGroupHeight = GetHeaderInteger(header, "height")
+                TileSetName = GetHeaderString(header, "tileset")
+                TileGroupName = GetHeaderString(header, "name")
+                TileGroupBmp = GetHeaderString(header, "bmp")
+                TileGroupNotes = GetHeaderString(header, "notes")
             Else
-                Debug.WriteLine($"  Error: No header found in tile group JSON: {fileName}")
-                Return False
+                Debug.WriteLine($"  No header in tile group JSON (using tiles data only): {fileName}")
             End If
 
             ' Store the tiles data
@@ -571,6 +579,15 @@ Public Class fTileGroups
                     If TileGroupWidth <> tilesData(0).Count Then
                         TileGroupWidth = tilesData(0).Count
                     End If
+
+                    ' Every row must be an array of the same length; a ragged
+                    ' group would index past a short row when placed.
+                    For Each row As JToken In tilesData
+                        If row.Type <> JTokenType.Array OrElse row.Count <> TileGroupWidth Then
+                            Debug.WriteLine($"  Error: JSON file '{fileName}' has rows of different lengths")
+                            Return False
+                        End If
+                    Next
                 Else
                     Debug.WriteLine($"  Error: JSON file '{fileName}' is not in the expected per-row format")
                     Return False
@@ -585,6 +602,28 @@ Public Class fTileGroups
             Debug.WriteLine("  Error importing tile group: " & ex.Message)
             Return False
         End Try
+    End Function
+
+    ''' <summary>
+    ''' Reads an optional string field from a tile-group header. Returns ""
+    ''' when the field is missing or null; non-string values are converted.
+    ''' </summary>
+    Private Shared Function GetHeaderString(header As JObject, key As String) As String
+        Dim token As JToken = header(key)
+        If token Is Nothing OrElse token.Type = JTokenType.Null Then Return ""
+        Return token.ToString()
+    End Function
+
+    ''' <summary>
+    ''' Reads an optional integer field from a tile-group header. Returns 0
+    ''' when the field is missing, null or not a number.
+    ''' </summary>
+    Private Shared Function GetHeaderInteger(header As JObject, key As String) As Integer
+        Dim token As JToken = header(key)
+        If token Is Nothing Then Return 0
+        Dim value As Integer
+        If Integer.TryParse(token.ToString(), value) Then Return value
+        Return 0
     End Function
 
     ''' <summary>
@@ -656,10 +695,9 @@ Public Class fTileGroups
                         End If
 
                         ' Try to get the tile image from the renderer.
-                        ' NOTE: GetTileImageByIndices returns a REFERENCE to a
-                        ' bitmap owned by the renderer's tileset cache — do not
-                        ' dispose it, or subsequent renders (and the main map
-                        ' view) lose that tile and show black/fallback.
+                        ' GetTileImageByIndices returns a NEW Bitmap (a copy of
+                        ' the cached tile), so it must be disposed here or each
+                        ' preview leaks one bitmap per tile.
                         Dim tileImage As Bitmap = Nothing
                         Try
                             tileImage = renderer.GetTileImageByIndices(tilesetIndex, imageIndex)
@@ -671,6 +709,8 @@ Public Class fTileGroups
                             g.DrawImage(tileImage, x * tileSize, y * tileSize)
                         Catch ex As Exception
                             Debug.WriteLine($"Error drawing tile at {x},{y}: {ex.Message}")
+                        Finally
+                            If tileImage IsNot Nothing Then tileImage.Dispose()
                         End Try
                     Next
                 Next
@@ -718,4 +758,4 @@ Public Class fTileGroups
         mainForm.InitializeTileGroupPlacementMode()
     End Sub
 
-End Class
+End Class

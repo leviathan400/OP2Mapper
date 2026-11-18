@@ -229,6 +229,67 @@ Public Class PlaceTileGroupCommand
 End Class
 
 ''' <summary>
+''' Groups several commands into one undo step — e.g. every tile touched by a
+''' single drag stroke. Execute runs them in order; Undo reverses them in
+''' reverse order so overlapping edits restore correctly.
+''' </summary>
+Public Class CompositeCommand
+    Inherits Command
+
+    ''' <summary>The grouped commands, in the order they were first executed.</summary>
+    Private ReadOnly _commands As List(Of Command)
+    ''' <summary>Text shown for this step in the Undo/Redo menu items.</summary>
+    Private ReadOnly _description As String
+
+    ''' <summary>
+    ''' Creates the group. The list is copied, so the caller can reuse or
+    ''' clear its own list afterwards. The commands are expected to have
+    ''' already been executed; this constructor does not run them.
+    ''' </summary>
+    Public Sub New(commands As List(Of Command), description As String)
+        _commands = New List(Of Command)(commands)
+        _description = description
+    End Sub
+
+    ''' <summary>
+    ''' Number of commands grouped in this step.
+    ''' </summary>
+    Public ReadOnly Property Count As Integer
+        Get
+            Return _commands.Count
+        End Get
+    End Property
+
+    ''' <summary>
+    ''' Re-applies every grouped command in its original order (used by Redo).
+    ''' </summary>
+    Public Overrides Sub Execute()
+        For Each c In _commands
+            c.Execute()
+        Next
+    End Sub
+
+    ''' <summary>
+    ''' Reverts every grouped command, last first, so a tile painted twice
+    ''' in one stroke ends up back at its value from before the stroke.
+    ''' </summary>
+    Public Overrides Sub Undo()
+        For i As Integer = _commands.Count - 1 To 0 Step -1
+            _commands(i).Undo()
+        Next
+    End Sub
+
+    ''' <summary>
+    ''' Description of the whole step for the Undo/Redo menu items.
+    ''' </summary>
+    Public Overrides ReadOnly Property Description As String
+        Get
+            Return _description
+        End Get
+    End Property
+End Class
+
+''' <summary>
 ''' One cell-type change in a bulk operation.
 ''' </summary>
 Public Structure CellTypeChange

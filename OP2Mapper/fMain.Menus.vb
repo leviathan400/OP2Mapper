@@ -265,11 +265,9 @@ Partial Public Class fMain
         Dim item As ToolStripMenuItem = TryCast(sender, ToolStripMenuItem)
         If item Is Nothing Then Return
 
-        ToolPaletteHelper.SetToolWindowsAlwaysOnTop(item.Checked)
-
-        ' Apply to any tool palettes that are currently open so the change
-        ' takes effect immediately instead of next-edit-mode-toggle.
-        ToolPaletteHelper.ApplyTopMostToAllToolForms(item.Checked)
+        ' Persists the setting, clears per-window overrides and applies it to
+        ' any tool palettes that are currently open.
+        ToolPaletteHelper.SetAllToolWindowsAlwaysOnTop(item.Checked)
     End Sub
 
     ' Event handlers (keeping these for the menu click events)
@@ -700,6 +698,20 @@ Partial Public Class fMain
                 zoomMenuItem.Checked = GlobalVariables.ZoomEnabled
             End If
         End If
+    End Sub
+
+    ''' <summary>Mapper3.ini key for Edit → Paste Includes Cell Types.</summary>
+    Private Const KeyPasteCellTypes As String = "PasteCellTypes"
+
+    ''' <summary>
+    ''' Handles Edit > Paste Includes Cell Types - sets whether pastes also write
+    ''' the copied cell types, and remembers the choice in Mapper3.ini. Takes
+    ''' effect on the next paste, including one already armed.
+    ''' </summary>
+    Private Sub PasteCellTypes_CheckedChanged(sender As Object, e As EventArgs)
+        GlobalVariables.PasteCellTypes = DirectCast(sender, ToolStripMenuItem).Checked
+        ToolPaletteHelper.WriteToolSetting(KeyPasteCellTypes, GlobalVariables.PasteCellTypes.ToString())
+        Debug.WriteLine("Paste Includes Cell Types: " & GlobalVariables.PasteCellTypes)
     End Sub
 
     ''' <summary>

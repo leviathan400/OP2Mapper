@@ -38,6 +38,10 @@ Public Class fTileSet
         MyBase.WndProc(m)
     End Sub
 
+    ''' <summary>
+    ''' Win32 RECT (screen coordinates) as passed in the WM_MOVING lParam;
+    ''' read, adjusted for snapping, then written back.
+    ''' </summary>
     <Runtime.InteropServices.StructLayout(Runtime.InteropServices.LayoutKind.Sequential)>
     Private Structure RECT
         Public Left As Integer
@@ -511,6 +515,11 @@ Public Class fTileSet
 
             Dim gridCol As Integer = adjustedX \ (TileSize + TilePadding)
             Dim gridRow As Integer = adjustedY \ (TileSize + TilePadding)
+
+            ' The panel is wider than the TilesPerRow-column grid; a click in the
+            ' empty strip to the right would otherwise wrap into the next row's
+            ' first tile. Ignore it.
+            If gridCol < 0 OrElse gridCol >= TilesPerRow Then Return
 
             ' Calculate the grid index
             Dim gridIndex As Integer = gridRow * TilesPerRow + gridCol

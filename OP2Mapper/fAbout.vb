@@ -19,11 +19,17 @@ Public Class fAbout
 
     ' Customizable properties - set these before showing the form
     ' or use the shared ShowAbout method
+    ''' <summary>Application name shown as the dialog's heading.</summary>
     Public Property ApplicationTitle As String = "OP2 Tool"
+    ''' <summary>Version string, e.g. "0.4.7".</summary>
     Public Property ApplicationVersion As String = "1.0.0"
+    ''' <summary>Build number string, e.g. "0138".</summary>
     Public Property ApplicationBuild As String = "0001"
+    ''' <summary>One-line description shown under the title.</summary>
     Public Property ApplicationDescription As String = "An Outpost 2 tool."
+    ''' <summary>Copyright line.</summary>
     Public Property ApplicationCopyright As String = "Outpost Universe © 2025"
+    ''' <summary>Website shown as a clickable link.</summary>
     Public Property ApplicationWebsite As String = "https://outpost2.net"
 
     ''' <summary>
@@ -53,9 +59,10 @@ Public Class fAbout
         ' Set form properties
         Me.Text = "About " & ApplicationTitle
 
-        ' Try to set icon from resources (customize resource name as needed)
+        ' Try to set icon from resources (customize resource name as needed).
+        ' Same icon as the main window / application.
         Try
-            Me.Icon = My.Resources.lists
+            Me.Icon = My.Resources.IconLarge
         Catch
             ' Icon resource not found, use default
         End Try

@@ -14,6 +14,18 @@ Partial Public Class MapRenderer
     ' Tileset handling methods
 
     ''' <summary>
+    ''' Folder the tilesets were loaded from, or Nothing if no tileset folder
+    ''' was found under the configured OP2 path (every tile then renders as a
+    ''' fallback). Checked by fMain to tell the user why.
+    ''' </summary>
+    Public ReadOnly Property TilesetDirectory As String
+        Get
+            Return _tilesetDirectory
+        End Get
+    End Property
+    Private _tilesetDirectory As String = Nothing
+
+    ''' <summary>
     ''' Loads all tilesets needed for the current map
     ''' </summary>
     Public Sub LoadMapTilesets()
@@ -21,6 +33,7 @@ Partial Public Class MapRenderer
 
         ' Clean up any existing tileset images
         ClearTilesets()
+        _tilesetDirectory = Nothing
 
         ' Default tileset paths
         Dim tilesetPath As String = Path.Combine(My.Settings.OP2Path, "OPU\base\tilesets")
@@ -44,6 +57,8 @@ Partial Public Class MapRenderer
                 Return
             End If
         End If
+
+        _tilesetDirectory = tilesetPath
 
         ' Load all tilesets used by this map
         For Each tilesetSource In _map.tilesetSources

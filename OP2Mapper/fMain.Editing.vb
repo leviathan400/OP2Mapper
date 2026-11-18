@@ -29,23 +29,64 @@ Partial Public Class fMain
 
 
     ''' <summary>
+    ''' The game sound played when edit mode is turned on, relative to the
+    ''' Outpost 2 folder (it ships with OPU).
+    ''' </summary>
+    Private Const EditModeSoundFile As String = "OPU\base\sounds\beep9.wav"
+
+    ''' <summary>
+    ''' Player for the edit-mode sound. Kept in a field because SoundPlayer
+    ''' plays from its own loaded copy of the file, and a player that's
+    ''' garbage-collected mid-sound can cut it off.
+    ''' </summary>
+    Private editModeSoundPlayer As SoundPlayer
+
+    ''' <summary>
+    ''' Plays beep9.wav from the Outpost 2 folder when edit mode is turned on.
+    ''' Silently does nothing if the file is missing or can't be played; the
+    ''' sound is a nicety, never a reason to block editing.
+    ''' </summary>
+    Private Sub PlayEditModeSound()
+        Try
+            If editModeSoundPlayer Is Nothing Then
+                If String.IsNullOrEmpty(My.Settings.OP2Path) Then Return
+                Dim soundPath As String = Path.Combine(My.Settings.OP2Path, EditModeSoundFile)
+                If Not File.Exists(soundPath) Then
+                    Debug.WriteLine("Edit mode sound not found: " & soundPath)
+                    Return
+                End If
+                editModeSoundPlayer = New SoundPlayer(soundPath)
+                editModeSoundPlayer.Load()
+            End If
+            editModeSoundPlayer.Play()   ' asynchronous
+        Catch ex As Exception
+            Debug.WriteLine("Could not play edit mode sound: " & ex.Message)
+            editModeSoundPlayer = Nothing
+        End Try
+    End Sub
+
+    ''' <summary>
     ''' Toggles edit mode on or off, handles UI updates and form management
     ''' </summary>
     Private Sub ToggleEditMode()
         If EditModeEnabled = False Then
             ' Enable edit mode
             EditModeEnabled = True
+            PlayEditModeSound()
 
             ' Reset tool selection state
             GlobalVariables.ActiveCellType = CellType.FastPassible1
             GlobalVariables.CellTypeToolActive = False
             GlobalVariables.ActiveTileMappingIndex = -1
+            ' Owned bitmap (UI shows copies of it) — free it, don't just drop it.
+            If GlobalVariables.SelectedTileImage IsNot Nothing Then GlobalVariables.SelectedTileImage.Dispose()
             GlobalVariables.SelectedTileImage = Nothing
             GlobalVariables.SelectedTilesetName = ""
             GlobalVariables.SelectedTileIndex = -1
             GlobalVariables.SelectedTilesetIndex = -1
 
-            ' Reset copy/paste state
+            ' Reset copy/paste state (erasing any selection rectangle first)
+            ClearCopySelectionDisplay()
             GlobalVariables.IsCopyMode = False
             GlobalVariables.CopyStage = 0
 
@@ -93,13 +134,11 @@ Partial Public Class fMain
 
             ' --------------------------
 
-            ' First-run smart layout: if the INI has no saved positions for any
-            ' tool palette, pick sensible defaults based on screen count/size
-            ' and save them. Subsequent runs restore per-form via RestorePosition
-            ' (already wired in each form's Load).
-            If Not ToolPaletteHelper.HasAnySavedToolPositions() Then
-                ToolPaletteHelper.ArrangeToolWindowsSmart()
-            End If
+            ' Each palette restored its own saved position in its Load. Any
+            ' palette with no usable saved position (first run, or saved on a
+            ' monitor that's no longer connected) gets a smart default; the
+            ' palettes that were restored stay where the user put them.
+            ToolPaletteHelper.ArrangeToolWindowsSmart(onlyUnplaced:=True)
 
             picSelectedTool.Show()
             Debug.WriteLine("Edit Mode Enabled")
@@ -111,9 +150,18 @@ Partial Public Class fMain
                 Debug.WriteLine("Copy mode exited during edit mode toggle")
             End If
 
+            ' Leave paste / tile-group placement through their proper exits so
+            ' their preview bitmaps are disposed and their flags cleared.
+            ' MapPanel_MouseDown checks these modes before EditModeEnabled, so
+            ' leaving either armed would let a click edit the map with edit
+            ' mode off.
+            If isPasteMode Then ExitPasteMode()
+            If GlobalVariables.TileGroupPlacementMode Then ExitTileGroupPlacementMode()
+
             ' Disable edit mode
             EditModeEnabled = False
             isPasteMode = False
+            GlobalVariables.TileGroupPlacementMode = False
 
             ' Disable edit mode - close the forms
             If tileSetForm IsNot Nothing Then tileSetForm.Close()       ' Tool 1
@@ -158,7 +206,8 @@ Partial Public Class fMain
                     mnuPaste.Enabled = False
                 End If
 
-                ' Reset copy/paste state
+                ' Reset copy/paste state (erasing any selection rectangle first)
+                ClearCopySelectionDisplay()
                 GlobalVariables.IsCopyMode = False
                 GlobalVariables.CopyStage = 0
 
@@ -351,6 +400,7 @@ Partial Public Class fMain
         ' If we want to discard copy data too, clear the arrays
         If Not keepCopyData Then
             GlobalVariables.CopiedTileMappings = Nothing
+            GlobalVariables.CopiedCellTypes = Nothing
             GlobalVariables.CopiedRegionWidth = 0
             GlobalVariables.CopiedRegionHeight = 0
 
@@ -366,6 +416,7 @@ Partial Public Class fMain
         End If
 
         ' Reset copy mode flags but preserve actual copied data if requested
+        ClearCopySelectionDisplay()
         GlobalVariables.IsCopyMode = False
         GlobalVariables.CopyStage = 0
 

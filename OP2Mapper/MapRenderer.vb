@@ -130,13 +130,11 @@ Public Class MapRenderer
             ' Clear background
             g.Clear(System.Drawing.Color.Black)
 
-            ' Calculate buffer size based on zoom level
-            ' Increase buffer when zoomed out, decrease when zoomed in
-            Dim baseBufferSize As Integer = 5
-            Dim adjustedBufferSize As Integer = CInt(baseBufferSize * (1.0F / Math.Max(scale, 0.1F)))
-
-            ' Ensure minimum buffer size
-            adjustedBufferSize = Math.Max(adjustedBufferSize, baseBufferSize)
+            ' One extra tile on each side covers tiles that straddle the
+            ' viewport edge and rounding in the caller's viewport math. Tiles
+            ' further out would be drawn entirely outside this bitmap, so a
+            ' larger (zoom-scaled) buffer was pure wasted work.
+            Const adjustedBufferSize As Integer = 1
 
             ' Calculate visible tiles with dynamic buffer.
             ' viewportRect is in *unscaled* map-pixel coordinates (see how the
@@ -323,40 +321,80 @@ Public Class MapRenderer
         Dim fontSize As Single = Math.Max(7.0F * scale, 6.0F)
         Dim scaledTileSize As Integer = CInt(_tileSize * scale)
 
-        Using font As New Font("Arial", fontSize, FontStyle.Bold)
-            For y As Integer = startY To endY
-                For x As Integer = startX To endX
-                    Dim tileX As Integer = CInt((x * _tileSize - viewportRect.X) * scale)
-                    Dim tileY As Integer = CInt((y * _tileSize - viewportRect.Y) * scale)
+        ' Below this tile size the labels overlap into unreadable noise (the
+        ' font has a 6pt floor), and drawing them was the most expensive thing
+        ' the editor did when zoomed out. Show the colour overlay instead so
+        ' the cell types are still visible.
+        Const MinReadableTilePx As Integer = 16
+        If scaledTileSize < MinReadableTilePx Then
+            RenderCellTypeOverlay(g, startX, startY, endX, endY, viewportRect, scale)
+            Return
+        End If
 
-                    ' Get cell type and label info
-                    Dim cellType As CellType = _map.GetCellType(x, y)
-                    Dim labelInfo As Tuple(Of String, System.Drawing.Color) = GetCellTypeLabel(cellType)
-                    Dim label As String = labelInfo.Item1
-                    Dim textColor As System.Drawing.Color = labelInfo.Item2
+        ' There are only a few distinct labels, so render each one (text plus
+        ' its dark outline — 9 DrawString calls) once into a small bitmap, then
+        ' blit that per tile. Previously every tile did a MeasureString and 9
+        ' DrawStrings on every paint.
+        Dim labelImages As New Dictionary(Of CellType, Bitmap)()
+        Try
+            Using font As New Font("Arial", fontSize, FontStyle.Bold)
+                For y As Integer = startY To endY
+                    For x As Integer = startX To endX
+                        Dim cellType As CellType = _map.GetCellType(x, y)
 
-                    Dim textSize As SizeF = g.MeasureString(label, font)
-                    Dim xPos As Single = tileX + (scaledTileSize - textSize.Width) / 2
-                    Dim yPos As Single = tileY + (scaledTileSize - textSize.Height) / 2
+                        ' Build this type's label the first time it's seen in
+                        ' this paint, then reuse it for every later tile.
+                        Dim labelImage As Bitmap = Nothing
+                        If Not labelImages.TryGetValue(cellType, labelImage) Then
+                            labelImage = BuildOutlinedLabel(g, cellType, font)
+                            labelImages(cellType) = labelImage
+                        End If
 
-                    ' Add dark outline for better readability
-                    For offsetX As Integer = -1 To 1
-                        For offsetY As Integer = -1 To 1
-                            If Not (offsetX = 0 AndAlso offsetY = 0) Then
-                                g.DrawString(label, font, Brushes.Black, xPos + offsetX, yPos + offsetY)
-                            End If
-                        Next
+                        ' Tile's top-left in screen pixels, then centre the label in it.
+                        Dim tileX As Integer = CInt((x * _tileSize - viewportRect.X) * scale)
+                        Dim tileY As Integer = CInt((y * _tileSize - viewportRect.Y) * scale)
+                        Dim xPos As Integer = tileX + (scaledTileSize - labelImage.Width) \ 2
+                        Dim yPos As Integer = tileY + (scaledTileSize - labelImage.Height) \ 2
+                        g.DrawImageUnscaled(labelImage, xPos, yPos)
                     Next
+                Next
+            End Using
+        Finally
+            For Each bmp In labelImages.Values
+                bmp.Dispose()
+            Next
+        End Try
+    End Sub
 
-                    ' Draw actual text — Using-wrap so the per-tile brush is
-                    ' deterministically disposed instead of leaked.
-                    Using textBrush As New SolidBrush(textColor)
-                        g.DrawString(label, font, textBrush, xPos, yPos)
-                    End Using
+    ''' <summary>
+    ''' Renders one cell type's label with a 1px dark outline onto a transparent
+    ''' bitmap sized to fit (plus the outline). Caller owns the bitmap.
+    ''' </summary>
+    Private Function BuildOutlinedLabel(measureGraphics As Graphics, cellType As CellType, font As Font) As Bitmap
+        Dim labelInfo As Tuple(Of String, System.Drawing.Color) = GetCellTypeLabel(cellType)
+        Dim label As String = labelInfo.Item1
+        Dim textSize As SizeF = measureGraphics.MeasureString(label, font)
+
+        ' +2 on each axis for the 1px outline on both sides.
+        Dim bmp As New Bitmap(Math.Max(1, CInt(Math.Ceiling(textSize.Width)) + 2),
+                              Math.Max(1, CInt(Math.Ceiling(textSize.Height)) + 2))
+        Using lg As Graphics = Graphics.FromImage(bmp)
+            ' ClearType (the system default) needs an opaque background and
+            ' leaves coloured fringes on a transparent bitmap; use greyscale AA.
+            lg.TextRenderingHint = Drawing.Text.TextRenderingHint.AntiAliasGridFit
+            For offsetX As Integer = -1 To 1
+                For offsetY As Integer = -1 To 1
+                    If Not (offsetX = 0 AndAlso offsetY = 0) Then
+                        lg.DrawString(label, font, Brushes.Black, 1 + offsetX, 1 + offsetY)
+                    End If
                 Next
             Next
+            Using textBrush As New SolidBrush(labelInfo.Item2)
+                lg.DrawString(label, font, textBrush, 1, 1)
+            End Using
         End Using
-    End Sub
+        Return bmp
+    End Function
 
     ''' <summary>
     ''' Fills each tile with a flat cell-type color plus border (CellTypeBasic mode).
@@ -402,9 +440,11 @@ Public Class MapRenderer
         Try
             For y As Integer = startY To endY
                 For x As Integer = startX To endX
+                    ' Tile's top-left in screen pixels.
                     Dim tileX As Integer = CInt((x * _tileSize - viewportRect.X) * scale)
                     Dim tileY As Integer = CInt((y * _tileSize - viewportRect.Y) * scale)
 
+                    ' Fill with the type's colour and outline the tile.
                     Dim cellType As CellType = _map.GetCellType(x, y)
                     Dim tileColor As System.Drawing.Color = GetDetailedColorForCellType(cellType)
 
@@ -413,6 +453,7 @@ Public Class MapRenderer
                     End Using
                     g.DrawRectangle(Pens.DarkGray, tileX, tileY, scaledTileSize, scaledTileSize)
 
+                    ' Label with the enum name, cut to 6 characters to fit the tile.
                     If drawText Then
                         Dim typeName As String = cellType.ToString()
                         If typeName.Length > 6 Then

@@ -261,6 +261,31 @@ Partial Public Class fMain
         pnlMap.Invalidate()
     End Sub
 
+    Private enclosedHighlightTimer As Timer = Nothing
+
+    ''' <summary>
+    ''' Called after any map edit (and undo/redo). While the highlight is on,
+    ''' recomputes it ~400 ms after the last change so the overlay tracks the
+    ''' map instead of showing the areas as they were when it was turned on.
+    ''' Debounced because the flood fill covers the whole map.
+    ''' </summary>
+    Private Sub ScheduleEnclosedHighlightRefresh()
+        If _highlightedEnclosedTiles Is Nothing Then Return
+        If enclosedHighlightTimer Is Nothing Then
+            enclosedHighlightTimer = New Timer With {.Interval = 400}
+            AddHandler enclosedHighlightTimer.Tick,
+                Sub(s, ev)
+                    enclosedHighlightTimer.Stop()
+                    ' The toggle may have been turned off / map closed meanwhile.
+                    If _highlightedEnclosedTiles Is Nothing OrElse currentMap Is Nothing Then Return
+                    RecomputeEnclosedHighlight()
+                    pnlMap.Invalidate()
+                End Sub
+        End If
+        enclosedHighlightTimer.Stop()
+        enclosedHighlightTimer.Start()
+    End Sub
+
     ''' <summary>
     ''' Drops the highlight overlay and unticks the menu item. Called when
     ''' the map being analysed is about to change (load / close) — the tile

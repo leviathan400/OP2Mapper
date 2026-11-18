@@ -23,35 +23,141 @@ Partial Public Class fMain
 
 
     ''' <summary>
+    ''' Maximum number of undo steps kept. Oldest steps are dropped beyond this.
+    ''' </summary>
+    Private Const MaxUndoSteps As Integer = 500
+
+    ''' <summary>
+    ''' Commands collected during the current drag stroke (Nothing when no
+    ''' stroke is open). Committed as one undo step by EndEditStroke.
+    ''' </summary>
+    Private currentStroke As List(Of Command) = Nothing
+
+    ''' <summary>
+    ''' The undo-stack top at the time the map was last saved/loaded (Nothing =
+    ''' empty stack). Undo/Redo compare against this so returning to the saved
+    ''' state clears the "*". Set to NoSavePoint when no history state matches
+    ''' the file on disk (e.g. a freshly created, never-saved map).
+    ''' </summary>
+    Private savePoint As Object = Nothing
+    Private Shared ReadOnly NoSavePoint As New Object()
+
+    ''' <summary>
     ''' Executes a command, marks the map dirty and pushes the command onto the undo
     ''' stack (clearing the redo stack). During undo/redo replay it only executes.
+    ''' While a drag stroke is open the command is collected into the stroke instead.
     ''' </summary>
     Private Sub ExecuteCommand(command As Command)
-        ' Any command mutates the map, so the document is now dirty.
-        SetMapDirty(True)
-        ' And the mini-map thumbnail needs to refresh — but debounced so a
-        ' drag-edit doesn't re-render the full map at every step.
-        ScheduleMiniMapRefresh()
-
         ' If we're in the middle of an undo/redo operation, don't add to the stack
         If isUndoRedo Then
             command.Execute()
+            SetMapDirty(True)
+            ScheduleMiniMapRefresh()
+            ScheduleEnclosedHighlightRefresh()
             Return
         End If
 
-        ' Execute the command
+        ' Execute first: if it throws, nothing is recorded and the dirty flag
+        ' isn't touched for a change that didn't happen.
         command.Execute()
 
-        ' Add to undo stack
-        undoStack.Push(command)
+        ' Any command mutates the map, so the document is now dirty.
+        SetMapDirty(True)
+        ' And the mini-map thumbnail needs to refresh — but debounced so a
+        ' drag-edit doesn't re-render the full map at every step. Same for the
+        ' enclosed-areas highlight, if it's on.
+        ScheduleMiniMapRefresh()
+        ScheduleEnclosedHighlightRefresh()
 
-        ' Clear redo stack when a new command is executed
-        redoStack.Clear()
+        If currentStroke IsNot Nothing Then
+            ' Part of a drag stroke — committed as one step in EndEditStroke.
+            currentStroke.Add(command)
+            Return
+        End If
 
-        ' Update UI to reflect undo/redo state
-        UpdateUndoRedoState()
+        PushUndo(command)
 
         Debug.WriteLine($"Command executed: {command.Description}")
+    End Sub
+
+    ''' <summary>
+    ''' Pushes a new step onto the undo stack, clears redo, and trims the oldest
+    ''' steps beyond MaxUndoSteps.
+    ''' </summary>
+    Private Sub PushUndo(command As Command)
+        undoStack.Push(command)
+        redoStack.Clear()
+
+        If undoStack.Count > MaxUndoSteps Then
+            ' Stack(Of T).ToArray is top-first; keep the newest MaxUndoSteps.
+            Dim newestFirst() As Command = undoStack.ToArray()
+            undoStack.Clear()
+            For i As Integer = MaxUndoSteps - 1 To 0 Step -1
+                undoStack.Push(newestFirst(i))
+            Next
+        End If
+
+        UpdateUndoRedoState()
+    End Sub
+
+    ''' <summary>
+    ''' Starts collecting edits into a single undo step (call on drag start).
+    ''' </summary>
+    Private Sub BeginEditStroke()
+        EndEditStroke()
+        currentStroke = New List(Of Command)()
+    End Sub
+
+    ''' <summary>
+    ''' Commits the open drag stroke (if any) as one undo step.
+    ''' </summary>
+    Private Sub EndEditStroke()
+        If currentStroke Is Nothing Then Return
+        Dim stroke As List(Of Command) = currentStroke
+        currentStroke = Nothing
+
+        If stroke.Count = 0 Then Return
+        If stroke.Count = 1 Then
+            PushUndo(stroke(0))
+        Else
+            PushUndo(New CompositeCommand(stroke, $"Paint ({stroke.Count} tiles)"))
+        End If
+    End Sub
+
+    ''' <summary>
+    ''' Ends an edit drag: clears the drag state and commits its undo step.
+    ''' </summary>
+    Private Sub EndEditDrag()
+        isEditDragging = False
+        lastEditTileX = -1
+        lastEditTileY = -1
+        EndEditStroke()
+    End Sub
+
+    ''' <summary>
+    ''' Records the current history position as matching the file on disk.
+    ''' </summary>
+    Private Sub MarkSavePoint()
+        EndEditStroke()
+        savePoint = If(undoStack.Count > 0, undoStack.Peek(), Nothing)
+        SetMapDirty(False)
+    End Sub
+
+    ''' <summary>
+    ''' Marks the map as unsaved with no history state matching disk — used for
+    ''' a newly created map, which has never been written.
+    ''' </summary>
+    Friend Sub MarkNewUnsavedMap()
+        savePoint = NoSavePoint
+        SetMapDirty(True)
+    End Sub
+
+    ''' <summary>
+    ''' Sets the dirty flag from whether the current history position is the save point.
+    ''' </summary>
+    Private Sub RefreshDirtyFromSavePoint()
+        Dim top As Object = If(undoStack.Count > 0, undoStack.Peek(), Nothing)
+        SetMapDirty(top IsNot savePoint)
     End Sub
 
     ''' <summary>
@@ -81,7 +187,7 @@ Partial Public Class fMain
     ''' If the map has unsaved changes, prompts Save / Discard / Cancel.
     ''' Returns False if the caller should abort the pending action.
     ''' </summary>
-    Private Function ConfirmDiscardUnsavedChanges() As Boolean
+    Friend Function ConfirmDiscardUnsavedChanges() As Boolean
         If Not mapIsDirty OrElse currentMap Is Nothing Then
             Return True
         End If
@@ -109,6 +215,9 @@ Partial Public Class fMain
     ''' affected tiles (or the whole panel for multi-tile commands).
     ''' </summary>
     Private Sub Undo()
+        ' Commit any stroke still open (e.g. Ctrl+Z pressed mid-drag).
+        EndEditStroke()
+
         If undoStack.Count = 0 Then
             Return
         End If
@@ -127,12 +236,13 @@ Partial Public Class fMain
             isUndoRedo = False
         End Try
 
-        ' Undoing a command moves us away from disk state.
-        SetMapDirty(True)
-        ScheduleMiniMapRefresh()
-
         ' Add to redo stack
         redoStack.Push(command)
+
+        ' Dirty unless this lands back on the saved state.
+        RefreshDirtyFromSavePoint()
+        ScheduleMiniMapRefresh()
+        ScheduleEnclosedHighlightRefresh()
 
         ' Update UI
         UpdateUndoRedoState()
@@ -161,6 +271,8 @@ Partial Public Class fMain
     ''' and refreshes the affected tiles (or the whole panel for multi-tile commands).
     ''' </summary>
     Private Sub Redo()
+        EndEditStroke()
+
         If redoStack.Count = 0 Then
             Return
         End If
@@ -179,12 +291,13 @@ Partial Public Class fMain
             isUndoRedo = False
         End Try
 
-        ' Redoing a command moves us away from disk state.
-        SetMapDirty(True)
-        ScheduleMiniMapRefresh()
-
         ' Add back to undo stack
         undoStack.Push(command)
+
+        ' Dirty unless this lands back on the saved state.
+        RefreshDirtyFromSavePoint()
+        ScheduleMiniMapRefresh()
+        ScheduleEnclosedHighlightRefresh()
 
         ' Update UI
         UpdateUndoRedoState()
@@ -245,8 +358,11 @@ Partial Public Class fMain
     ''' from the previous map can't be replayed.
     ''' </summary>
     Private Sub ClearUndoRedoStacks()
+        currentStroke = Nothing
         undoStack.Clear()
         redoStack.Clear()
+        ' Empty history now matches the file on disk.
+        savePoint = Nothing
         UpdateUndoRedoState()
     End Sub
 
@@ -307,14 +423,9 @@ Partial Public Class fMain
 
                     If mnuCopy IsNot Nothing AndAlso mnuCopy.Enabled Then
                         Debug.WriteLine("Ctrl+C pressed - Starting copy operation")
-                        InitializeCopyMode()
-
-                        ' Ensure UI is updated
-                        picSelectedTool.Show()
-                        picSelectedTool.Refresh()
-                        UpdateToolAndPlacementLabels()
-                        Application.DoEvents()  ' Force immediate UI update
-
+                        ' Same path as Edit → Copy, so the render-mode check and
+                        ' leaving paste/tile-group mode apply to the shortcut too.
+                        Copy_Click(Nothing, EventArgs.Empty)
                         Return True
                     End If
                 End If

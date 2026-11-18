@@ -9,7 +9,8 @@ Public Class fSettings
     ''' Form load event handler - loads the current My.Settings values into the fields
     ''' </summary>
     Private Sub fSettings_Load(sender As Object, e As EventArgs) Handles MyBase.Load
-        Me.Icon = My.Resources.lists
+        ' Same icon as the main window / application.
+        Me.Icon = My.Resources.IconLarge
         Me.Text = "Settings"
         lblVersion.Text = "Version " & GlobalVariables.ApplicationVersion & " (Build " & GlobalVariables.ApplicationBuild & ")"
 
@@ -122,10 +123,43 @@ Public Class fSettings
     ''' Save button click event handler - persists the values to My.Settings and closes
     ''' </summary>
     Private Sub btnSave_Click(sender As Object, e As EventArgs) Handles btnSave.Click
+        ' The text boxes are editable, so typed paths get the same scrutiny the
+        ' Browse buttons apply. A bad OP2 path otherwise saved silently and
+        ' later showed up as a map full of placeholder tiles.
+        Dim op2Path As String = txtOP2Path.Text.Trim()
+        Dim workingPath As String = txtDefaultSaveDirectory.Text.Trim()
+        Dim tilegroupsPath As String = txtTilegroups.Text.Trim()
+
+        If String.IsNullOrEmpty(op2Path) OrElse Not Directory.Exists(op2Path) Then
+            MessageBox.Show(
+                "The Outpost 2 directory doesn't exist:" & vbCrLf & vbCrLf &
+                If(String.IsNullOrEmpty(op2Path), "(empty)", op2Path),
+                "Invalid Outpost 2 Directory", MessageBoxButtons.OK, MessageBoxIcon.Error)
+            txtOP2Path.Focus()
+            Return
+        End If
+
+        If Not IsValidOP2Directory(op2Path) Then
+            ' The folder exists but doesn't look like a standard install —
+            ' allow it (layouts vary), but make sure it's deliberate.
+            Dim answer As DialogResult = MessageBox.Show(
+                "This folder doesn't look like an Outpost 2 v1.4.1 installation " &
+                "(expected Outpost2.exe, and OPU\OPULauncher.exe)." & vbCrLf & vbCrLf &
+                "Tilesets may not load. Save it anyway?",
+                "Outpost 2 Directory", MessageBoxButtons.YesNo, MessageBoxIcon.Warning)
+            If answer <> DialogResult.Yes Then
+                txtOP2Path.Focus()
+                Return
+            End If
+        End If
+
+        If Not EnsureFolderOrAsk(workingPath, "default save directory", txtDefaultSaveDirectory) Then Return
+        If Not EnsureFolderOrAsk(tilegroupsPath, "tile groups directory", txtTilegroups) Then Return
+
         ' Store the values directly to My.Settings
-        My.Settings.OP2Path = txtOP2Path.Text
-        My.Settings.WorkingPath = txtDefaultSaveDirectory.Text
-        My.Settings.Tilegroups = txtTilegroups.Text
+        My.Settings.OP2Path = op2Path
+        My.Settings.WorkingPath = workingPath
+        My.Settings.Tilegroups = tilegroupsPath
 
         ' Save the settings
         My.Settings.Save()
@@ -143,6 +177,31 @@ Public Class fSettings
         Me.DialogResult = DialogResult.Cancel
         Me.Close()
     End Sub
+
+    ''' <summary>
+    ''' Returns True if the folder exists, or is empty (unset), or the user agreed
+    ''' to create it and creation succeeded. Otherwise explains why, focuses the
+    ''' field and returns False.
+    ''' </summary>
+    Private Function EnsureFolderOrAsk(folder As String, description As String, field As TextBox) As Boolean
+        If String.IsNullOrEmpty(folder) OrElse Directory.Exists(folder) Then Return True
+
+        Dim answer As DialogResult = MessageBox.Show(
+            $"The {description} doesn't exist:" & vbCrLf & vbCrLf & folder & vbCrLf & vbCrLf & "Create it?",
+            "Settings", MessageBoxButtons.YesNo, MessageBoxIcon.Question)
+        If answer = DialogResult.Yes Then
+            Try
+                Directory.CreateDirectory(folder)
+                Return True
+            Catch ex As Exception
+                MessageBox.Show($"Could not create the {description}:" & vbCrLf & vbCrLf & ex.Message,
+                                "Settings", MessageBoxButtons.OK, MessageBoxIcon.Error)
+            End Try
+        End If
+
+        field.Focus()
+        Return False
+    End Function
 
     ''' <summary>
     ''' Validates whether a path is a valid Outpost 2 1.4.1 installation directory

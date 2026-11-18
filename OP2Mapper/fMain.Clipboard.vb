@@ -159,6 +159,12 @@ Partial Public Class fMain
             Return
         End If
 
+        ' Leave any other placement mode first. MapPanel_MouseDown checks paste
+        ' and tile-group modes before copy mode, so leaving either armed made
+        ' the next click paste/place instead of starting the copy selection.
+        If isPasteMode Then ExitPasteMode()
+        If GlobalVariables.TileGroupPlacementMode Then ExitTileGroupPlacementMode()
+
         ' Start copy mode
         InitializeCopyMode()
 
@@ -201,6 +207,7 @@ Partial Public Class fMain
         ' but preserve the copied data
         If GlobalVariables.IsCopyMode Then
             Debug.WriteLine("Exiting copy mode for immediate paste")
+            ClearCopySelectionDisplay()
             GlobalVariables.IsCopyMode = False
             GlobalVariables.CopyStage = 0
         End If
@@ -224,6 +231,9 @@ Partial Public Class fMain
     ''' tool display, labels and status bar to match.
     ''' </summary>
     Private Sub InitializeCopyMode()
+        ' Erase any rectangle left from the previous copy before resetting.
+        ClearCopySelectionDisplay()
+
         ' Reset copy mode state
         GlobalVariables.IsCopyMode = True
         GlobalVariables.CopyStage = 0
@@ -269,6 +279,7 @@ Partial Public Class fMain
         ' Exit copy mode if we're in it (but preserve the copied data)
         If GlobalVariables.IsCopyMode Then
             ' Just reset the flags but keep the data
+            ClearCopySelectionDisplay()
             GlobalVariables.IsCopyMode = False
             GlobalVariables.CopyStage = 0
         End If
@@ -288,7 +299,9 @@ Partial Public Class fMain
         ' Update the UI
         lblCurrentTool.Text = "Current Tool: Paste Tiles"
         lblCurrentTool.ForeColor = System.Drawing.Color.DarkBlue
-        lblCurrentPlacement.Text = $"Click location to paste {GlobalVariables.CopiedRegionWidth}x{GlobalVariables.CopiedRegionHeight} tiles"
+        lblCurrentPlacement.Text = $"Click location to paste {GlobalVariables.CopiedRegionWidth}x{GlobalVariables.CopiedRegionHeight} tiles" &
+                                   If(GlobalVariables.PasteCellTypes AndAlso GlobalVariables.CopiedCellTypes IsNot Nothing,
+                                      " + cell types", "")
         lblCurrentPlacement.ForeColor = System.Drawing.Color.Blue
 
         ' Update tool display
@@ -356,9 +369,17 @@ Partial Public Class fMain
                 Return
             End If
 
-            ' Create a composite image of the copied region
-            Dim width As Integer = GlobalVariables.CopiedRegionWidth * 32
-            Dim height As Integer = GlobalVariables.CopiedRegionHeight * 32
+            ' Create a composite image of the copied region. Full 32px tiles
+            ' for normal copies; for big ones, shrink the per-tile size so the
+            ' bitmap stays around 16M pixels (64 MB) — a 512x256-tile copy at
+            ' 32px would need ~512 MB and silently fail. The paint code draws
+            ' the preview stretched to the region's on-screen size, so a
+            ' smaller bitmap still lines up.
+            Const MaxPreviewPixels As Double = 4096.0 * 4096.0
+            Dim regionTiles As Double = CDbl(GlobalVariables.CopiedRegionWidth) * GlobalVariables.CopiedRegionHeight
+            Dim ts As Integer = CInt(Math.Max(1, Math.Min(32, Math.Floor(Math.Sqrt(MaxPreviewPixels / regionTiles)))))
+            Dim width As Integer = GlobalVariables.CopiedRegionWidth * ts
+            Dim height As Integer = GlobalVariables.CopiedRegionHeight * ts
 
             ' Create the preview image
             pastePreviewImage = New Bitmap(width, height)
@@ -412,24 +433,26 @@ Partial Public Class fMain
                             End If
 
                             ' Try to get the tile image from the renderer.
-                            ' NOTE: GetTileImageByIndices returns a REFERENCE to
-                            ' a bitmap owned by the renderer's tileset cache —
-                            ' do not dispose it, or subsequent renders lose that
-                            ' tile and show black/fallback.
+                            ' GetTileImageByIndices returns a NEW Bitmap (a
+                            ' copy of the cached tile), so dispose it here or
+                            ' each preview leaks one bitmap per tile.
+                            Dim tileImage As Bitmap = Nothing
                             Try
-                                Dim tileImage As Bitmap = mapRenderer.GetTileImageByIndices(tilesetIndex, imageIndex)
+                                tileImage = mapRenderer.GetTileImageByIndices(tilesetIndex, imageIndex)
                                 If tileImage Is Nothing Then
                                     Continue For
                                 End If
 
                                 ' Draw the semi-transparent tile
                                 g.DrawImage(tileImage,
-                                   New Rectangle(x * 32, y * 32, 32, 32),
+                                   New Rectangle(x * ts, y * ts, ts, ts),
                                    0, 0, tileImage.Width, tileImage.Height,
                                    GraphicsUnit.Pixel, ia)
                             Catch ex As Exception
                                 Debug.WriteLine($"Error drawing tile at {x},{y}: {ex.Message}")
                                 ' Just continue to the next tile
+                            Finally
+                                If tileImage IsNot Nothing Then tileImage.Dispose()
                             End Try
                         Next
                     Next
@@ -536,7 +559,12 @@ Partial Public Class fMain
         GlobalVariables.CopiedTileMappings = New Integer(GlobalVariables.CopiedRegionWidth - 1,
                                                GlobalVariables.CopiedRegionHeight - 1) {}
 
-        ' Copy the tile mappings
+        ' Cell types are always captured, whatever the Paste Includes Cell Types
+        ' setting, so the user can change that setting after copying.
+        GlobalVariables.CopiedCellTypes = New CellType(GlobalVariables.CopiedRegionWidth - 1,
+                                                       GlobalVariables.CopiedRegionHeight - 1) {}
+
+        ' Copy the tile mappings and cell types
         For y As Integer = 0 To GlobalVariables.CopiedRegionHeight - 1
             For x As Integer = 0 To GlobalVariables.CopiedRegionWidth - 1
                 Dim mapX As Integer = startX + x
@@ -545,6 +573,7 @@ Partial Public Class fMain
                 ' Get the mapping index
                 Dim mappingIndex As Integer = currentMap.GetTileMappingIndex(mapX, mapY)
                 GlobalVariables.CopiedTileMappings(x, y) = mappingIndex
+                GlobalVariables.CopiedCellTypes(x, y) = currentMap.GetCellType(mapX, mapY)
             Next
         Next
 
@@ -608,11 +637,14 @@ Partial Public Class fMain
     End Sub
 
     ''' <summary>
-    ''' Cancels copy mode: resets the copy flags, discards any partial copy data and
-    ''' disables the Paste menu item. Use ExitPasteMode/timer paths to keep copied data.
+    ''' Cancels copy mode: resets the copy flags and the in-progress selection.
+    ''' Previously copied tiles are kept, and Paste is re-enabled if there are any.
     ''' </summary>
     Private Sub ExitCopyMode()
         Debug.WriteLine("Exiting copy mode")
+
+        ' Erase the selection rectangle while the copy state still describes it.
+        ClearCopySelectionDisplay()
 
         ' Clear the tool display first (visual feedback)
         UpdateToolDisplay(System.Drawing.Color.Black, "Copy mode ended")
@@ -626,17 +658,23 @@ Partial Public Class fMain
         ' Update UI based on current state
         UpdateToolAndPlacementLabels()
 
-        ' If we're explicitly canceling a copy operation, 
-        ' we should also clear any partial copy data
-        GlobalVariables.CopiedTileMappings = Nothing
-        GlobalVariables.CopiedRegionWidth = 0
-        GlobalVariables.CopiedRegionHeight = 0
+        ' Discard only the in-progress selection. CopiedTileMappings is written
+        ' only when a copy completes, so whatever it holds is a finished copy
+        ' (the previous one, or the one just made) — keep it.
+        GlobalVariables.CopyStartX = -1
+        GlobalVariables.CopyStartY = -1
+        GlobalVariables.CopyEndX = -1
+        GlobalVariables.CopyEndY = -1
 
-        ' Disable paste menu item since we've canceled the copy
+        ' InitializeCopyMode disabled Paste; re-enable it if there's still
+        ' something to paste.
         Try
             Dim mnuPaste As ToolStripMenuItem = DirectCast(MainMenuStrip.Items.Find("mnuEdit", False)(0), ToolStripMenuItem).DropDownItems.Find("mnuPaste", False)(0)
             If mnuPaste IsNot Nothing Then
-                mnuPaste.Enabled = False
+                mnuPaste.Enabled = GlobalVariables.EditModeEnabled AndAlso
+                                   GlobalVariables.CopiedTileMappings IsNot Nothing AndAlso
+                                   GlobalVariables.CopiedRegionWidth > 0 AndAlso
+                                   GlobalVariables.CopiedRegionHeight > 0
             End If
         Catch ex As Exception
             Debug.WriteLine("Error updating paste menu item: " & ex.Message)
@@ -651,6 +689,9 @@ Partial Public Class fMain
     Private Sub CopyConfirmationTimer_Tick(sender As Object, e As EventArgs)
         ' Stop the timer
         copyConfirmationTimer.Stop()
+
+        ' Erase the "copied" rectangle (the map is also repainted below).
+        ClearCopySelectionDisplay()
 
         ' Explicitly ensure copy mode is exited
         GlobalVariables.IsCopyMode = False
@@ -850,6 +891,7 @@ Partial Public Class fMain
     Private Sub ClearClipboardData()
         ' Clear the copied tile mappings
         GlobalVariables.CopiedTileMappings = Nothing
+        GlobalVariables.CopiedCellTypes = Nothing
         GlobalVariables.CopiedRegionWidth = 0
         GlobalVariables.CopiedRegionHeight = 0
 

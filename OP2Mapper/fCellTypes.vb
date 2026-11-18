@@ -32,6 +32,10 @@ Public Class fCellTypes
         MyBase.WndProc(m)
     End Sub
 
+    ''' <summary>
+    ''' Win32 RECT (screen coordinates) as passed in the WM_MOVING lParam;
+    ''' read, adjusted for snapping, then written back.
+    ''' </summary>
     <Runtime.InteropServices.StructLayout(Runtime.InteropServices.LayoutKind.Sequential)>
     Private Structure RECT
         Public Left As Integer
@@ -84,7 +88,8 @@ Public Class fCellTypes
         ' Clear existing items
         cmbCellTypeList.Items.Clear()
 
-        ' Add all cell types with descriptive text
+        ' Add all cell types with descriptive text. The order must match
+        ' GlobalVariables.CellTypeMap, which maps each list index to its CellType.
         cmbCellTypeList.Items.Add("Fast Passable 1 (F1)")
         cmbCellTypeList.Items.Add("Fast Passable 2 (F2)")
         cmbCellTypeList.Items.Add("Medium Passable 1 (M1)")
@@ -118,10 +123,11 @@ Public Class fCellTypes
         cmbCellTypeList.Items.Add("Tube 4 (T4)")
         cmbCellTypeList.Items.Add("Tube 5 (T5)")
 
-        ' Select the first item by default
-        If cmbCellTypeList.Items.Count > 0 Then
-            cmbCellTypeList.SelectedIndex = 0
-        End If
+        ' Deliberately start with nothing selected. Selecting an item arms the
+        ' cell-type painting tool, so a default selection here would make the
+        ' first map click after entering edit mode paint a type the user never
+        ' picked.
+        cmbCellTypeList.SelectedIndex = -1
     End Sub
 
     ''' <summary>
@@ -129,11 +135,30 @@ Public Class fCellTypes
     ''' any active tile selection
     ''' </summary>
     Private Sub cmbCellTypeList_SelectedIndexChanged(sender As Object, e As EventArgs) Handles cmbCellTypeList.SelectedIndexChanged
+        ApplySelectedCellType()
+    End Sub
+
+    ''' <summary>
+    ''' Click handler - re-applies the clicked item even when it was already
+    ''' selected (SelectedIndexChanged doesn't fire then), so the user can
+    ''' switch back to the same cell type after picking a tile.
+    ''' </summary>
+    Private Sub cmbCellTypeList_Click(sender As Object, e As EventArgs) Handles cmbCellTypeList.Click
+        ApplySelectedCellType()
+    End Sub
+
+    ''' <summary>
+    ''' Makes the list's selected cell type the active painting tool.
+    ''' </summary>
+    Private Sub ApplySelectedCellType()
         ' Use the global dictionary to look up the cell type
         Dim index As Integer = cmbCellTypeList.SelectedIndex
+        If index < 0 Then Return
 
         If GlobalVariables.CellTypeMap.ContainsKey(index) Then
-            ' Reset tile placement selection and image since we're now using cell type tool
+            ' Reset tile placement selection and image since we're now using cell type tool.
+            ' The image is an owned bitmap (the UI shows copies) — free it.
+            If GlobalVariables.SelectedTileImage IsNot Nothing Then GlobalVariables.SelectedTileImage.Dispose()
             GlobalVariables.SelectedTileImage = Nothing
             GlobalVariables.SelectedTilesetName = ""
             GlobalVariables.SelectedTileIndex = -1

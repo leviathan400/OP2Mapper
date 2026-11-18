@@ -104,9 +104,10 @@ Partial Public Class MapRenderer
     End Function
 
     ''' <summary>
-    ''' Gets the overlay color for a cell type
+    ''' Gets the overlay color for a cell type. Friend so the Tile Selection
+    ''' window can draw the same colours over its preview of a copy.
     ''' </summary>
-    Private Function GetOverlayColorForCellType(cellType As CellType) As System.Drawing.Color
+    Friend Function GetOverlayColorForCellType(cellType As CellType) As System.Drawing.Color
         Select Case cellType
             ' Impassable - Red
             Case CellType.Impassible1, CellType.Impassible2,

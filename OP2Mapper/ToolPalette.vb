@@ -35,6 +35,15 @@ Module ToolPaletteHelper
     ' behavior matches the previous hardcoded TopMost = True.
     Private Const KeyToolWindowsAlwaysOnTop As String = "ToolWindowsAlwaysOnTop"
 
+    ' Per-window override, stored as AlwaysOnTop_<form class name>. Falls back
+    ' to ToolWindowsAlwaysOnTop when absent.
+    Private Const KeyToolWindowTopMostPrefix As String = "AlwaysOnTop_"
+    Private ReadOnly ToolFormTypeNames As String() =
+        {"fTileSet", "fCellTypes", "fTileSelect", "fTileGroups", "fMiniMap"}
+
+    ' Title-bar menu hooks, kept here so they aren't garbage collected.
+    Private ReadOnly SystemMenus As New Dictionary(Of Form, ToolPaletteSystemMenu)
+
 #Region "Form Tracking"
     ''' <summary>
     ''' Adds a form to the tracked tool-palette list (no-op if already registered)
@@ -51,6 +60,7 @@ Module ToolPaletteHelper
     ''' </summary>
     Public Sub UnregisterToolForm(form As Form)
         ToolForms.Remove(form)
+        DetachSystemMenu(form)
         'Debug.WriteLine($"Unregistered Tool Form: {form.Name}")
     End Sub
 
@@ -72,15 +82,72 @@ Module ToolPaletteHelper
         Debug.WriteLine("ConfigureAsToolPalette: " & form.Name.ToString)
 
         form.FormBorderStyle = FormBorderStyle.FixedToolWindow
-        ' TopMost is user-controllable via View → Tool Windows Always On Top.
+        ' TopMost is user-controllable per window (title-bar menu) or for all
+        ' palettes (title-bar menu / View → Tool Windows Always On Top).
         ' Stored in Mapper3.ini; defaults to True so first-run matches the
         ' previous hardcoded behavior.
-        form.TopMost = GetToolWindowsAlwaysOnTop()
+        form.TopMost = GetToolWindowAlwaysOnTop(form)
         form.ShowInTaskbar = False
         form.Icon = My.Resources.lists
         form.Tag = "ToolPalette"
         RegisterToolForm(form)
+        AttachSystemMenu(form)
+
+        ' Save the position as soon as the user finishes moving the window
+        ' (ResizeEnd fires at the end of a move as well as a resize), so it
+        ' survives even if the app exits without the palette being closed.
+        AddHandler form.ResizeEnd, AddressOf ToolForm_ResizeEnd
     End Sub
+
+    ''' <summary>
+    ''' Saves a palette's position after the user moves or resizes it.
+    ''' </summary>
+    Private Sub ToolForm_ResizeEnd(sender As Object, e As EventArgs)
+        Dim form As Form = TryCast(sender, Form)
+        If form Is Nothing Then Return
+        Dim key As String = GetToolPositionKey(form)
+        If key IsNot Nothing Then SavePosition(form, key)
+    End Sub
+
+    ''' <summary>
+    ''' INI key prefix under which a palette's position is stored, or Nothing
+    ''' for a form that isn't one of the five palettes. Must match the names
+    ''' each form passes to RestorePosition / SavePosition.
+    ''' </summary>
+    Private Function GetToolPositionKey(form As Form) As String
+        If TypeOf form Is fTileSet Then Return KeyTileSet
+        If TypeOf form Is fCellTypes Then Return KeyCellTypes
+        If TypeOf form Is fTileSelect Then Return KeyTileSelect
+        If TypeOf form Is fTileGroups Then Return KeyTileGroups
+        If TypeOf form Is fMiniMap Then Return KeyMiniMap
+        Return Nothing
+    End Function
+
+    ''' <summary>
+    ''' Saves the position of every open palette. Called from fMain when the
+    ''' app closes, because unowned palettes get no FormClosing at exit.
+    ''' </summary>
+    Public Sub SaveAllToolPositions()
+        For Each f As Form In GetToolForms().ToList()
+            If f Is Nothing OrElse f.IsDisposed OrElse Not f.Visible Then Continue For
+            ' Minimized windows report a bogus off-screen location; skip them
+            ' so the last real position stays saved.
+            If f.WindowState = FormWindowState.Minimized Then Continue For
+            Dim key As String = GetToolPositionKey(f)
+            If key IsNot Nothing Then SavePosition(f, key)
+        Next
+    End Sub
+
+    ''' <summary>
+    ''' True when the INI holds a position for this key that is still on a
+    ''' connected screen, i.e. RestorePosition will have placed the form.
+    ''' </summary>
+    Private Function HasUsableSavedPosition(key As String, form As Form) As Boolean
+        Dim left As Integer = ReadIniInteger($"{key}Left", Integer.MinValue)
+        Dim top As Integer = ReadIniInteger($"{key}Top", Integer.MinValue)
+        If left = Integer.MinValue OrElse top = Integer.MinValue Then Return False
+        Return IsFormAccessibleAtLocation(New Point(left, top), form.Size)
+    End Function
 
     ''' <summary>
     ''' Reads the "Tool Windows Always On Top" preference from the INI.
@@ -98,6 +165,21 @@ Module ToolPaletteHelper
     End Sub
 
     ''' <summary>
+    ''' Reads a palette's own preference (e.g. Tile Selection's zoom) from the
+    ''' [Window] section of Mapper3.ini, or defaultValue when it isn't set.
+    ''' </summary>
+    Public Function ReadToolSetting(key As String, defaultValue As String) As String
+        Return ReadIniValue(key, defaultValue)
+    End Function
+
+    ''' <summary>
+    ''' Saves a palette's own preference to the [Window] section of Mapper3.ini.
+    ''' </summary>
+    Public Sub WriteToolSetting(key As String, value As String)
+        WriteIniValue(key, value)
+    End Sub
+
+    ''' <summary>
     ''' Applies the supplied TopMost value to every registered tool palette
     ''' that's currently open. Called by fMain when the user toggles the
     ''' "Tool Windows Always On Top" menu item.
@@ -108,6 +190,84 @@ Module ToolPaletteHelper
                 f.TopMost = topMost
             End If
         Next
+    End Sub
+
+    ''' <summary>
+    ''' Reads one palette's always-on-top preference. Falls back to the
+    ''' all-windows preference when the palette has no setting of its own.
+    ''' </summary>
+    Public Function GetToolWindowAlwaysOnTop(form As Form) As Boolean
+        Return ReadIniBoolean(KeyToolWindowTopMostPrefix & form.GetType().Name,
+                              defaultValue:=GetToolWindowsAlwaysOnTop())
+    End Function
+
+    ''' <summary>
+    ''' Sets and persists the always-on-top state of a single palette.
+    ''' </summary>
+    Public Sub SetToolWindowAlwaysOnTop(form As Form, value As Boolean)
+        WriteIniValue(KeyToolWindowTopMostPrefix & form.GetType().Name, value.ToString())
+        form.TopMost = value
+    End Sub
+
+    ''' <summary>
+    ''' Sets and persists the always-on-top state of every palette, open or
+    ''' not, overriding any per-window choices, and keeps fMain's View menu
+    ''' item in step.
+    ''' </summary>
+    Public Sub SetAllToolWindowsAlwaysOnTop(value As Boolean)
+        SetToolWindowsAlwaysOnTop(value)
+        For Each typeName As String In ToolFormTypeNames
+            WriteIniValue(KeyToolWindowTopMostPrefix & typeName, value.ToString())
+        Next
+        ApplyTopMostToAllToolForms(value)
+        SyncMainMenuTopMostItem(value)
+    End Sub
+
+    ''' <summary>
+    ''' True when every open palette is currently always on top.
+    ''' </summary>
+    Public Function AllOpenToolFormsTopMost() As Boolean
+        For Each f As Form In GetToolForms()
+            If f IsNot Nothing AndAlso Not f.IsDisposed AndAlso Not f.TopMost Then Return False
+        Next
+        Return True
+    End Function
+
+    ''' <summary>
+    ''' Updates the check mark on fMain's View → Tool Windows Always On Top.
+    ''' Setting it to its current value raises no CheckedChanged, so this
+    ''' can't loop back into SetAllToolWindowsAlwaysOnTop.
+    ''' </summary>
+    Private Sub SyncMainMenuTopMostItem(value As Boolean)
+        Dim mainForm As Form = Application.OpenForms("fMain")
+        If mainForm Is Nothing Then Return
+        For Each strip As MenuStrip In mainForm.Controls.OfType(Of MenuStrip)()
+            For Each found As ToolStripItem In strip.Items.Find("mnuToolsTopMost", True)
+                Dim menuItem As ToolStripMenuItem = TryCast(found, ToolStripMenuItem)
+                If menuItem IsNot Nothing Then menuItem.Checked = value
+            Next
+        Next
+    End Sub
+
+    ''' <summary>
+    ''' Gives a palette its title-bar right-click menu (always-on-top items
+    ''' plus any window-specific ones).
+    ''' </summary>
+    Private Sub AttachSystemMenu(form As Form)
+        If SystemMenus.ContainsKey(form) Then Return
+        SystemMenus(form) = New ToolPaletteSystemMenu(form)
+    End Sub
+
+    ''' <summary>
+    ''' Unhooks a palette's title-bar menu handler when the palette closes,
+    ''' so the form can be garbage collected.
+    ''' </summary>
+    Private Sub DetachSystemMenu(form As Form)
+        Dim menu As ToolPaletteSystemMenu = Nothing
+        If SystemMenus.TryGetValue(form, menu) Then
+            menu.Detach()
+            SystemMenus.Remove(form)
+        End If
     End Sub
 
 #End Region
@@ -611,21 +771,6 @@ Module ToolPaletteHelper
 #Region "Arrange Windows"
 
     ''' <summary>
-    ''' Returns True when at least one of the five tool palettes has a saved
-    ''' position in the INI file. A False result means a first run, so the
-    ''' smart layout can pick sensible defaults.
-    ''' </summary>
-    Public Function HasAnySavedToolPositions() As Boolean
-        Dim keys = {KeyTileSet, KeyCellTypes, KeyTileSelect, KeyTileGroups, KeyMiniMap}
-        For Each k In keys
-            If ReadIniInteger(k & "Left", Integer.MinValue) <> Integer.MinValue Then
-                Return True
-            End If
-        Next
-        Return False
-    End Function
-
-    ''' <summary>
     ''' Returns the open form instance of the given type, or Nothing if not open
     ''' </summary>
     Private Function FindOpenToolForm(formType As Type) As Form
@@ -649,8 +794,27 @@ Module ToolPaletteHelper
     '''
     ''' Layout for a narrow single screen: cascade from top-left so every
     ''' window is at least visible.
+    '''
+    ''' With onlyUnplaced = True, palettes that already have a usable saved
+    ''' position keep it; only the rest are moved to the default layout. The
+    ''' layout still uses every open palette's size, so the gaps it leaves
+    ''' for restored palettes are the same as on a first run.
     ''' </summary>
-    Public Sub ArrangeToolWindowsSmart()
+    Public Sub ArrangeToolWindowsSmart(Optional onlyUnplaced As Boolean = False)
+        ' Remember where the already-placed palettes are, so they can be put
+        ' back after the layout below moves everything.
+        Dim keepLocations As New Dictionary(Of Form, Point)
+        If onlyUnplaced Then
+            For Each f As Form In GetToolForms()
+                Dim key As String = GetToolPositionKey(f)
+                If key IsNot Nothing AndAlso HasUsableSavedPosition(key, f) Then
+                    keepLocations(f) = f.Location
+                End If
+            Next
+            ' Every open palette was restored: nothing to arrange.
+            If keepLocations.Count = GetToolForms().Count Then Return
+        End If
+
         Dim tileSet = FindOpenToolForm(GetType(fTileSet))
         Dim cellTypes = FindOpenToolForm(GetType(fCellTypes))
         Dim tileSelect = FindOpenToolForm(GetType(fTileSelect))
@@ -675,20 +839,15 @@ Module ToolPaletteHelper
             LayoutCascade(workArea, tileSet, cellTypes, tileSelect, tileGroups, miniMap)
         End If
 
-        ' Persist the chosen positions so this only runs once.
-        SaveToolPosition(tileSet, KeyTileSet)
-        SaveToolPosition(cellTypes, KeyCellTypes)
-        SaveToolPosition(tileSelect, KeyTileSelect)
-        SaveToolPosition(tileGroups, KeyTileGroups)
-        SaveToolPosition(miniMap, KeyMiniMap)
-    End Sub
-
-    ''' <summary>
-    ''' Saves a tool form's position under the given INI key, skipping Nothing
-    ''' </summary>
-    Private Sub SaveToolPosition(form As Form, key As String)
-        If form Is Nothing Then Return
-        SavePosition(form, key)
+        ' Put the restored palettes back, then persist the newly chosen
+        ' positions so this only happens once per palette.
+        For Each kvp In keepLocations
+            kvp.Key.Location = kvp.Value
+        Next
+        For Each f As Form In {tileSet, cellTypes, tileSelect, tileGroups, miniMap}
+            If f Is Nothing OrElse keepLocations.ContainsKey(f) Then Continue For
+            SavePosition(f, GetToolPositionKey(f))
+        Next
     End Sub
 
     ''' <summary>
@@ -771,3 +930,191 @@ Module ToolPaletteHelper
 #End Region
 
 End Module
+
+''' <summary>
+''' The menu shown when the user right-clicks a tool palette's title bar (or
+''' presses Alt+Space while it's focused):
+'''   - "Always On Top (This Window)" toggles just this palette
+'''   - "All Tool Windows Always On Top" toggles every palette
+''' followed by any window-specific items from a palette that implements
+''' IToolPaletteMenuExtras (e.g. Tile Selection's size and zoom options).
+'''
+''' This is our own menu, not the Windows system menu. Most palettes have no
+''' close button, and Windows gives such windows no system menu, so items
+''' added to it never showed there; and the system menu would also offer
+''' Close, which the palettes shouldn't have. Subclasses the form's window
+''' with a NativeWindow so the five palette forms need no code of their own.
+''' </summary>
+Friend Class ToolPaletteSystemMenu
+    Inherits NativeWindow
+
+    Private Const WM_NCRBUTTONDOWN As Integer = &HA4
+    Private Const WM_NCRBUTTONUP As Integer = &HA5
+    Private Const WM_SYSCOMMAND As Integer = &H112
+    Private Const HTCAPTION As Integer = 2
+    Private Const SC_KEYMENU As Integer = &HF100
+
+    ''' <summary>The tool palette whose title bar this menu belongs to.</summary>
+    Private ReadOnly palette As Form
+    ''' <summary>The menu, built on first use and reused after that.</summary>
+    Private menu As ContextMenuStrip = Nothing
+    ''' <summary>The two always-on-top items, re-checked each time the menu opens.</summary>
+    Private thisWindowItem As ToolStripMenuItem
+    Private allWindowsItem As ToolStripMenuItem
+    ''' <summary>The palette's own items, with their IToolPaletteMenuExtras index in Tag.</summary>
+    Private ReadOnly extraMenuItems As New List(Of ToolStripMenuItem)
+
+    ''' <summary>
+    ''' Hooks the palette's window. Safe to call before the window handle
+    ''' exists; the hook is applied when it's created.
+    ''' </summary>
+    Public Sub New(form As Form)
+        palette = form
+        ' Changing some form properties (e.g. ShowInTaskbar) recreates the
+        ' window handle, which drops the subclass.
+        AddHandler palette.HandleCreated, AddressOf Palette_HandleCreated
+        If palette.IsHandleCreated Then Attach()
+    End Sub
+
+    ''' <summary>
+    ''' Re-hooks the palette after its window handle is (re)created.
+    ''' </summary>
+    Private Sub Palette_HandleCreated(sender As Object, e As EventArgs)
+        Attach()
+    End Sub
+
+    ''' <summary>
+    ''' Subclasses the palette's current window handle.
+    ''' </summary>
+    Private Sub Attach()
+        ' Drop any hook on an old handle before taking the new one.
+        If Handle <> IntPtr.Zero Then ReleaseHandle()
+        AssignHandle(palette.Handle)
+    End Sub
+
+    ''' <summary>
+    ''' Stops listening for handle changes, removes the window hook and frees
+    ''' the menu.
+    ''' </summary>
+    Public Sub Detach()
+        RemoveHandler palette.HandleCreated, AddressOf Palette_HandleCreated
+        If Handle <> IntPtr.Zero Then ReleaseHandle()
+        If menu IsNot Nothing Then
+            menu.Dispose()
+            menu = Nothing
+        End If
+    End Sub
+
+    ''' <summary>
+    ''' Builds the menu: the two always-on-top items, then the palette's own
+    ''' items (if any) after a separator.
+    ''' </summary>
+    Private Sub BuildMenu()
+        menu = New ContextMenuStrip()
+
+        thisWindowItem = New ToolStripMenuItem("Always On Top (This Window)")
+        AddHandler thisWindowItem.Click,
+            Sub() ToolPaletteHelper.SetToolWindowAlwaysOnTop(palette, Not palette.TopMost)
+        allWindowsItem = New ToolStripMenuItem("All Tool Windows Always On Top")
+        AddHandler allWindowsItem.Click,
+            Sub() ToolPaletteHelper.SetAllToolWindowsAlwaysOnTop(Not ToolPaletteHelper.AllOpenToolFormsTopMost())
+        menu.Items.Add(thisWindowItem)
+        menu.Items.Add(allWindowsItem)
+
+        Dim extras As IToolPaletteMenuExtras = TryCast(palette, IToolPaletteMenuExtras)
+        Dim texts As IList(Of String) = If(extras IsNot Nothing, extras.GetExtraMenuItems(), Nothing)
+        If texts IsNot Nothing AndAlso texts.Count > 0 Then
+            menu.Items.Add(New ToolStripSeparator())
+            For i As Integer = 0 To texts.Count - 1
+                If texts(i) = "-" Then
+                    menu.Items.Add(New ToolStripSeparator())
+                    Continue For
+                End If
+                Dim item As New ToolStripMenuItem(texts(i)) With {.Tag = i}
+                AddHandler item.Click,
+                    Sub(sender As Object, e As EventArgs)
+                        extras.OnExtraMenuItem(CInt(DirectCast(sender, ToolStripItem).Tag))
+                    End Sub
+                menu.Items.Add(item)
+                extraMenuItems.Add(item)
+            Next
+        End If
+
+        ' Refresh the check marks each time the menu opens, so they reflect
+        ' changes made from other palettes or the View menu.
+        AddHandler menu.Opening,
+            Sub()
+                thisWindowItem.Checked = palette.TopMost
+                allWindowsItem.Checked = ToolPaletteHelper.AllOpenToolFormsTopMost()
+                If extras IsNot Nothing Then
+                    For Each item In extraMenuItems
+                        item.Checked = extras.IsExtraMenuItemChecked(CInt(item.Tag))
+                    Next
+                End If
+            End Sub
+    End Sub
+
+    ''' <summary>
+    ''' Opens the menu at the given screen position.
+    ''' </summary>
+    Private Sub ShowMenu(screenPos As Point)
+        If menu Is Nothing Then BuildMenu()
+        menu.Show(screenPos)
+    End Sub
+
+    ''' <summary>
+    ''' Sees the palette's messages before the form does. A right-click on the
+    ''' title bar, or Alt+Space, opens our menu instead of the Windows one;
+    ''' everything else is passed on to the form unchanged.
+    ''' </summary>
+    Protected Overrides Sub WndProc(ByRef m As Message)
+        Select Case m.Msg
+            Case WM_NCRBUTTONDOWN
+                ' Swallow the press on the title bar so Windows doesn't start
+                ' its own title-bar menu handling.
+                If m.WParam.ToInt32() = HTCAPTION Then Return
+
+            Case WM_NCRBUTTONUP
+                ' The release on the title bar: show our menu at the cursor.
+                ' Not passing it on also stops Windows opening its system menu
+                ' (which, where it exists, includes Close).
+                If m.WParam.ToInt32() = HTCAPTION Then
+                    ShowMenu(Cursor.Position)
+                    Return
+                End If
+
+            Case WM_SYSCOMMAND
+                ' Alt+Space arrives as SC_KEYMENU with a space in lParam. Show
+                ' our menu under the title bar's left end instead.
+                ' (The low four bits of wParam are used by Windows internally.)
+                If (m.WParam.ToInt32() And &HFFF0) = SC_KEYMENU AndAlso m.LParam.ToInt32() = AscW(" "c) Then
+                    ShowMenu(palette.PointToScreen(Point.Empty))
+                    Return
+                End If
+        End Select
+
+        MyBase.WndProc(m)
+    End Sub
+
+End Class
+
+''' <summary>
+''' Implemented by a tool palette that wants its own items in its title-bar
+''' menu, below the always-on-top items. Items are identified by their index
+''' in the list GetExtraMenuItems returns.
+''' </summary>
+Public Interface IToolPaletteMenuExtras
+
+    ''' <summary>
+    ''' The item texts, in menu order. "-" adds a separator. Read once each
+    ''' time the window handle is created, so the list should not change.
+    ''' </summary>
+    Function GetExtraMenuItems() As IList(Of String)
+
+    ''' <summary>Whether the item at this index shows a check mark.</summary>
+    Function IsExtraMenuItemChecked(index As Integer) As Boolean
+
+    ''' <summary>Called when the user picks the item at this index.</summary>
+    Sub OnExtraMenuItem(index As Integer)
+
+End Interface

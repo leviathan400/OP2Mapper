@@ -10,15 +10,20 @@ Imports OP2MapJsonTools
 ' https://github.com/leviathan400/OP2Mapper
 '
 ' GlobalVariables
+' Application-wide shared state: version info, the active editing tool
+' (selected tile / cell type / tile group), edit / copy / paste mode flags,
+' view options (grid, coordinates, render mode), the cell-type lookup table,
+' and the blank-map template paths plus their extraction from the embedded
+' BlankMaps.zip. Read and written by fMain and all the tool palettes.
 
 Module GlobalVariables
 
     ' Application info
 
     ''' <summary>Build number string shown in the About/title info.</summary>
-    Public Const ApplicationBuild As String = "0133"
+    Public Const ApplicationBuild As String = "0144"
     ''' <summary>Application version string shown in the About/title info.</summary>
-    Public Const ApplicationVersion As String = "0.4.4"
+    Public Const ApplicationVersion As String = "0.6.0"
     ''' <summary>Application name used in titles and messages.</summary>
     Public Const ApplicationName As String = "OP2Mapper"      ' OP2Mapper / OP2Mapper3
     ''' <summary>One-line application description.</summary>
@@ -86,6 +91,18 @@ Module GlobalVariables
     Public CopiedRegionWidth As Integer = 0
     ''' <summary>Height in tiles of the copied region; written by fMain.Clipboard.</summary>
     Public CopiedRegionHeight As Integer = 0
+    ''' <summary>
+    ''' Cell types of the copied region, captured alongside CopiedTileMappings on
+    ''' every copy (Nothing = no copy). Always captured so the paste toggle can be
+    ''' changed after copying; written by fMain.Clipboard.
+    ''' </summary>
+    Public CopiedCellTypes As CellType(,) = Nothing
+    ''' <summary>
+    ''' Edit → Paste Includes Cell Types. When True (the default) a paste also
+    ''' writes the copied cell types; when False only the tiles are pasted and
+    ''' the target keeps its own cell types. Saved in Mapper3.ini.
+    ''' </summary>
+    Public PasteCellTypes As Boolean = True
 
     ' Tile Group placement state
     ''' <summary>True while a tile group is armed for placement; written by fMain.TileGroups and fMain.Editing.</summary>
@@ -103,16 +120,52 @@ Module GlobalVariables
     ''' <summary>Filename of the selected tile group; written by fTileGroups.</summary>
     Public TileGroupFileName As String = ""
 
-    ' Location for the extracted blank-map templates. Lives next to the .exe
-    ' (the embedded blankmaps.zip is extracted here on first use). Computed
-    ' fresh each access so we don't depend on module init order with
-    ' Application.StartupPath.
-    ''' <summary>Folder holding the extracted blank-map templates (beside the .exe); computed on each access, never assigned.</summary>
+    ' Location for the extracted blank-map templates. Normally next to the
+    ' .exe; if that folder isn't writable (e.g. installed under Program
+    ' Files) the templates go to %LOCALAPPDATA%\OP2Mapper\BlankMaps instead.
+    ' Resolved on first access (after Application.StartupPath is valid) and
+    ' cached.
+    Private _blankMapsPath As String = Nothing
+
+    ''' <summary>Folder holding the extracted blank-map templates (beside the .exe, or under LocalAppData if that isn't writable).</summary>
     Public ReadOnly Property BlankMapsPath As String
         Get
-            Return Path.Combine(Application.StartupPath, "BlankMaps")
+            If _blankMapsPath Is Nothing Then
+                _blankMapsPath = ResolveBlankMapsPath()
+            End If
+            Return _blankMapsPath
         End Get
     End Property
+
+    ''' <summary>
+    ''' Picks the exe-side BlankMaps folder if it already has templates or can
+    ''' be written to; otherwise a per-user folder under LocalAppData.
+    ''' </summary>
+    Private Function ResolveBlankMapsPath() As String
+        Dim exeSide As String = Path.Combine(Application.StartupPath, "BlankMaps")
+        If Directory.Exists(exeSide) AndAlso Directory.GetFiles(exeSide, "blank_*.map").Length > 0 Then
+            Return exeSide
+        End If
+        If IsDirectoryWritable(Application.StartupPath) Then
+            Return exeSide
+        End If
+        Return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                            "OP2Mapper", "BlankMaps")
+    End Function
+
+    ''' <summary>
+    ''' True if a file can be created in the folder (probes with a temp file).
+    ''' </summary>
+    Private Function IsDirectoryWritable(folder As String) As Boolean
+        Try
+            Dim probe As String = Path.Combine(folder, ".write-test-" & Guid.NewGuid().ToString("N"))
+            Using fs As New FileStream(probe, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose)
+            End Using
+            Return True
+        Catch
+            Return False
+        End Try
+    End Function
 
     ' Property with notification for ActiveCellType
     ''' <summary>Cell type applied when painting cell types; setting it notifies fMain to refresh its labels.</summary>
@@ -167,7 +220,9 @@ Module GlobalVariables
     ''' <summary>Coordinate label spacing in tiles; set from the fMain grid-options dialog.</summary>
     Public CoordinateSpacing As Integer = 32
 
-    ' Dictionary mapping between cell type indices and enum values
+    ' Dictionary mapping between cell type indices and enum values.
+    ' The order must match the list built in fCellTypes.PopulateCellTypesList:
+    ' the list's SelectedIndex is the key looked up here.
     ''' <summary>Maps UI list indices (0-31) to CellType enum values; populated here, read-only thereafter.</summary>
     Public ReadOnly CellTypeMap As New Dictionary(Of Integer, CellType) From {
     {0, CellType.FastPassible1},
@@ -281,119 +336,105 @@ Module GlobalVariables
     End Function
 
     ''' <summary>
-    ''' Ensures the BlankMaps folder is populated. On first run (or if the
-    ''' folder was deleted between runs), extracts the embedded blankmaps.zip
-    ''' resource to <see cref="BlankMapsPath"/> and sets the folder Hidden so
-    ''' it doesn't visually clutter the install directory.
+    ''' Ensures the BlankMaps folder holds every template from the embedded
+    ''' blankmaps.zip. Any template that is missing, or whose size doesn't
+    ''' match the archive (e.g. an interrupted earlier extraction), is
+    ''' (re)written. The archive is small and embedded, so checking every
+    ''' entry on each call is cheap.
     '''
-    ''' Safe to call any number of times — a no-op once the expected files
-    ''' are in place. Callers (e.g. fNewMap_Load) can invoke it
-    ''' unconditionally without worrying about cost.
+    ''' Returns Nothing on success, or a user-readable error message if the
+    ''' templates couldn't be written — callers should show it, since New Map
+    ''' can't work without them.
     ''' </summary>
-    Public Sub EnsureBlankMapsExtracted()
-        ' Use a known map file as a sentinel — protects against the case where
-        ' the folder exists but is empty (e.g. extraction was interrupted, or
-        ' the user manually emptied it).
-        Const sentinelFile As String = "blank_128x128.map"
-        Dim sentinelPath As String = Path.Combine(BlankMapsPath, sentinelFile)
-        If File.Exists(sentinelPath) Then Return
+    Public Function EnsureBlankMapsExtracted() As String
+        Dim folder As String = BlankMapsPath
+        Dim wroteAny As Boolean = False
 
         Try
-            ExtractBlankMapsFromZip(BlankMapsPath)
+            If Not Directory.Exists(folder) Then
+                Directory.CreateDirectory(folder)
+            End If
+
+            Using zipArchive As ZipArchive = OpenEmbeddedBlankMapsZip()
+                Dim templateCount As Integer = 0
+
+                For Each entry As ZipArchiveEntry In zipArchive.Entries
+                    If Not (entry.Name.EndsWith(".map") AndAlso entry.Name.StartsWith("blank_")) Then Continue For
+                    templateCount += 1
+
+                    ' entry.Name (not FullName) keeps every file inside the target folder.
+                    Dim targetPath As String = Path.Combine(folder, entry.Name)
+                    If File.Exists(targetPath) AndAlso New FileInfo(targetPath).Length = entry.Length Then
+                        Continue For
+                    End If
+
+                    ' Write to a temp name, then move into place, so a crash
+                    ' mid-write never leaves a truncated template behind.
+                    Dim tempPath As String = targetPath & ".tmp"
+                    Using entryStream As Stream = entry.Open()
+                        Using fileStream As New FileStream(tempPath, FileMode.Create, FileAccess.Write)
+                            entryStream.CopyTo(fileStream)
+                        End Using
+                    End Using
+                    If File.Exists(targetPath) Then File.Delete(targetPath)
+                    File.Move(tempPath, targetPath)
+                    wroteAny = True
+                Next
+
+                If templateCount = 0 Then
+                    Throw New Exception("No blank map files were found in the embedded archive.")
+                End If
+            End Using
         Catch ex As Exception
-            Debug.WriteLine($"EnsureBlankMapsExtracted: extraction failed: {ex.Message}")
-            Return
+            Debug.WriteLine($"EnsureBlankMapsExtracted: extraction failed: {ex}")
+            Return "Could not prepare the blank map templates needed for New Map." & vbCrLf & vbCrLf &
+                   "Folder: " & folder & vbCrLf &
+                   "Error: " & ex.Message
         End Try
 
         ' Hide the folder so the install dir stays tidy. Best-effort — if the
         ' filesystem refuses (read-only, antivirus, etc.) we just skip it; the
         ' folder being visible is harmless, only cosmetic.
-        Try
-            Dim existing As FileAttributes = File.GetAttributes(BlankMapsPath)
-            If (existing And FileAttributes.Hidden) <> FileAttributes.Hidden Then
-                File.SetAttributes(BlankMapsPath, existing Or FileAttributes.Hidden)
-            End If
-        Catch ex As Exception
-            Debug.WriteLine($"EnsureBlankMapsExtracted: could not set Hidden attribute: {ex.Message}")
-        End Try
-    End Sub
+        If wroteAny Then
+            Try
+                Dim existing As FileAttributes = File.GetAttributes(folder)
+                If (existing And FileAttributes.Hidden) <> FileAttributes.Hidden Then
+                    File.SetAttributes(folder, existing Or FileAttributes.Hidden)
+                End If
+            Catch ex As Exception
+                Debug.WriteLine($"EnsureBlankMapsExtracted: could not set Hidden attribute: {ex.Message}")
+            End Try
+        End If
+
+        Return Nothing
+    End Function
 
     ''' <summary>
-    ''' Extracts blank maps from embedded zip to the specified folder
+    ''' Opens the embedded blankmaps.zip resource. Caller disposes the archive
+    ''' (which also closes the underlying resource stream).
     ''' </summary>
-    ''' <param name="targetFolder">Folder to extract blank maps to</param>
-    Private Sub ExtractBlankMapsFromZip(targetFolder As String)
-        Try
-            ' Find the embedded zip resource
-            Dim assembly As Assembly = Assembly.GetExecutingAssembly()
-            Dim resourceNames As String() = assembly.GetManifestResourceNames()
+    Private Function OpenEmbeddedBlankMapsZip() As ZipArchive
+        Dim asm As Assembly = Assembly.GetExecutingAssembly()
 
-            ' Debug: List all embedded resources
-            'Debug.WriteLine("All embedded resources:")
-            'For Each name As String In resourceNames
-            '    Debug.WriteLine("  - " & name)
-            'Next
-
-            Dim zipResourceName As String = Nothing
-            For Each resourceName As String In resourceNames
-                If resourceName.ToLower().EndsWith(".zip") AndAlso
-                   (resourceName.ToLower().Contains("blank") OrElse resourceName.ToLower().Contains("maps")) Then
-                    zipResourceName = resourceName
-                    Exit For
-                End If
-            Next
-
-            If String.IsNullOrEmpty(zipResourceName) Then
-                Throw New Exception("Could not find embedded blankmaps.zip resource")
+        Dim zipResourceName As String = Nothing
+        For Each resourceName As String In asm.GetManifestResourceNames()
+            Dim lower As String = resourceName.ToLowerInvariant()
+            If lower.EndsWith(".zip") AndAlso (lower.Contains("blank") OrElse lower.Contains("maps")) Then
+                zipResourceName = resourceName
+                Exit For
             End If
+        Next
 
-            'Debug.WriteLine("Using zip resource: " & zipResourceName)          'OP2MapJsonTools.blankmaps.zip
+        If String.IsNullOrEmpty(zipResourceName) Then
+            Throw New Exception("Could not find the embedded blankmaps.zip resource.")
+        End If
 
-            ' Create target directory
-            If Not Directory.Exists(targetFolder) Then
-                Directory.CreateDirectory(targetFolder)
-            End If
-
-            ' Extract the zip - use the FULL resource name
-            Using resourceStream As Stream = assembly.GetManifestResourceStream(zipResourceName)
-                If resourceStream Is Nothing Then
-                    Throw New Exception($"Could not load resource stream for: {zipResourceName}")
-                End If
-                'Debug.WriteLine("Successfully opened resource stream")
-
-                Using zipArchive As New ZipArchive(resourceStream, ZipArchiveMode.Read)
-                    Dim extractedCount As Integer = 0
-                    'Debug.WriteLine($"Zip archive contains {zipArchive.Entries.Count} entries")
-
-                    For Each entry As ZipArchiveEntry In zipArchive.Entries
-                        'Debug.WriteLine($"Processing zip entry: {entry.Name}")
-                        If entry.Name.EndsWith(".map") AndAlso entry.Name.StartsWith("blank_") Then
-                            Dim targetPath As String = Path.Combine(targetFolder, entry.Name)
-
-                            Using entryStream As Stream = entry.Open()
-                                Using fileStream As New FileStream(targetPath, FileMode.Create, FileAccess.Write)
-                                    entryStream.CopyTo(fileStream)
-                                End Using
-                            End Using
-
-                            extractedCount += 1
-                            'Debug.WriteLine("Extracted: " & entry.Name)
-                        End If
-                    Next
-
-                    Debug.WriteLine($"Successfully extracted {extractedCount} blank map files")
-
-                    If extractedCount = 0 Then
-                        Throw New Exception("No blank map files were found in the zip archive")
-                    End If
-                End Using
-            End Using
-
-        Catch ex As Exception
-            Debug.WriteLine("ERROR extracting blank maps from zip: " & ex.Message)
-            Throw
-        End Try
-    End Sub
+        Dim resourceStream As Stream = asm.GetManifestResourceStream(zipResourceName)
+        If resourceStream Is Nothing Then
+            Throw New Exception($"Could not load resource stream for: {zipResourceName}")
+        End If
+        Return New ZipArchive(resourceStream, ZipArchiveMode.Read, leaveOpen:=False)
+    End Function
 
 
     '''' <summary>

@@ -31,6 +31,91 @@ Partial Public Class fMain
     End Enum
 
     ''' <summary>
+    ''' Largest export bitmap we'll attempt, in pixels. A 32bpp GDI+ bitmap of
+    ''' this size is ~1 GB; anything bigger reliably fails with an unhelpful
+    ''' "Parameter is not valid" / OutOfMemory, so we refuse up front instead.
+    ''' </summary>
+    Private Const MaxExportPixels As Long = 16384L * 16384L
+
+    ''' <summary>
+    ''' Renders the full map at the given scale with a forced overlay set (the
+    ''' editor's own grid/coordinate toggles are saved and restored). Throws
+    ''' with a clear message if the image would be too large. Caller owns the
+    ''' returned bitmap.
+    ''' </summary>
+    Private Function RenderExportBitmap(scale As Double, gridMode As ExportGridMode) As Bitmap
+        Dim pixelWidth As Long = CLng(Math.Round(currentMap.WidthInTiles() * 32 * scale))
+        Dim pixelHeight As Long = CLng(Math.Round(currentMap.HeightInTiles() * 32 * scale))
+        If pixelWidth * pixelHeight > MaxExportPixels Then
+            Throw New InvalidOperationException(
+                $"The image would be {pixelWidth:N0} x {pixelHeight:N0} pixels, which is too large to create. " &
+                "Use a smaller export size (e.g. 12.5%) for this map.")
+        End If
+
+        ' The export always picks a deterministic overlay set, regardless of
+        ' what the user has toggled in the editor. Save the on-screen flags,
+        ' force the chosen combination for the render, then restore.
+        Dim savedShowGrid As Boolean = mapRenderer.ShowGrid
+        Dim savedShowLargeGrid As Boolean = mapRenderer.ShowLargeGrid
+        Dim savedShowCoordinates As Boolean = mapRenderer.ShowCoordinates
+
+        Try
+            mapRenderer.ShowGrid = (gridMode = ExportGridMode.SmallGrid)
+            mapRenderer.ShowLargeGrid = (gridMode = ExportGridMode.LargeGrid)
+            mapRenderer.ShowCoordinates = False
+
+            Dim bmp As Bitmap
+            Try
+                bmp = mapRenderer.RenderFullMap(CSng(scale))
+            Catch ex As Exception When TypeOf ex Is OutOfMemoryException OrElse TypeOf ex Is ArgumentException
+                ' GDI+ reports a failed large allocation as either of these.
+                Throw New InvalidOperationException(
+                    $"Not enough memory to create a {pixelWidth:N0} x {pixelHeight:N0} pixel image. " &
+                    "Try a smaller export size.", ex)
+            End Try
+
+            ' RenderFullMap returns Nothing when its internal map reference is null.
+            If bmp Is Nothing Then
+                Throw New InvalidOperationException("Map renderer produced no output for export.")
+            End If
+            Return bmp
+        Finally
+            mapRenderer.ShowGrid = savedShowGrid
+            mapRenderer.ShowLargeGrid = savedShowLargeGrid
+            mapRenderer.ShowCoordinates = savedShowCoordinates
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Saves a bitmap as a quality-95 JPEG. Writes to a temp file first and
+    ''' only then replaces the target, so a failed save never destroys an
+    ''' existing export.
+    ''' </summary>
+    Private Sub SaveJpegSafely(bmp As Bitmap, targetPath As String)
+        Dim tempPath As String = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(targetPath)),
+            Path.GetFileNameWithoutExtension(targetPath) & ".saving-" & Guid.NewGuid().ToString("N").Substring(0, 8) & ".jpg")
+        Try
+            Dim jpegEncoder As ImageCodecInfo = GetEncoder(ImageFormat.Jpeg)
+            Using encoderParameters As New EncoderParameters(1)
+                encoderParameters.Param(0) = New EncoderParameter(Encoder.Quality, 95L)
+                bmp.Save(tempPath, jpegEncoder, encoderParameters)
+            End Using
+
+            If File.Exists(targetPath) Then
+                File.Replace(tempPath, targetPath, Nothing)
+            Else
+                File.Move(tempPath, targetPath)
+            End If
+        Finally
+            Try
+                If File.Exists(tempPath) Then File.Delete(tempPath)
+            Catch
+                ' Best effort - a leftover temp file is harmless.
+            End Try
+        End Try
+    End Sub
+
+    ''' <summary>
     ''' Renders the full map at the given scale and saves it as a high-quality JPEG next
     ''' to the map file, with an optional filename suffix and forced grid overlay.
     ''' </summary>
@@ -49,44 +134,11 @@ Partial Public Class fMain
                 exportFilename = Path.Combine(currentMapPath, Path.GetFileNameWithoutExtension(currentMapFile) & "_" & CurrentRenderMode.ToString() & "_" & filenameSuffix & ".jpg")
             End If
 
-            ' Check if file already exists
-            If File.Exists(exportFilename) Then
-                Debug.WriteLine($"File already exists, deleting: {exportFilename}")
-                File.Delete(exportFilename)
-            End If
-
-            ' The export always picks a deterministic overlay set, regardless of
-            ' what the user has toggled in the editor. Save the on-screen flags,
-            ' force the chosen combination for the render, then restore.
-            Dim savedShowGrid As Boolean = mapRenderer.ShowGrid
-            Dim savedShowLargeGrid As Boolean = mapRenderer.ShowLargeGrid
-            Dim savedShowCoordinates As Boolean = mapRenderer.ShowCoordinates
-
-            Try
-                mapRenderer.ShowGrid = (gridMode = ExportGridMode.SmallGrid)
-                mapRenderer.ShowLargeGrid = (gridMode = ExportGridMode.LargeGrid)
-                mapRenderer.ShowCoordinates = False
-
-                ' Use MapRenderer to generate the map at specified scale.
-                ' RenderFullMap returns Nothing when its internal map reference
-                ' is null — throw a clear error so the outer Catch shows it.
-                Dim exportBitmap As Bitmap = mapRenderer.RenderFullMap(CSng(scale))
-                If exportBitmap Is Nothing Then
-                    Throw New InvalidOperationException("Map renderer produced no output for export.")
-                End If
-                Using exportBitmap
-                    ' Save as JPEG with high quality
-                    Dim jpegEncoder As ImageCodecInfo = GetEncoder(ImageFormat.Jpeg)
-                    Using encoderParameters As New EncoderParameters(1)
-                        encoderParameters.Param(0) = New EncoderParameter(Encoder.Quality, 95L)
-                        exportBitmap.Save(exportFilename, jpegEncoder, encoderParameters)
-                    End Using
-                End Using
-            Finally
-                mapRenderer.ShowGrid = savedShowGrid
-                mapRenderer.ShowLargeGrid = savedShowLargeGrid
-                mapRenderer.ShowCoordinates = savedShowCoordinates
-            End Try
+            ' Render first, then save via a temp file: the previous export is
+            ' only replaced once the new one has been written successfully.
+            Using exportBitmap As Bitmap = RenderExportBitmap(scale, gridMode)
+                SaveJpegSafely(exportBitmap, exportFilename)
+            End Using
 
             ' Calculate scale percentage for message
             Dim scalePercent As Integer = CInt(scale * 100)
@@ -107,7 +159,7 @@ Partial Public Class fMain
     ''' Creates and saves a comprehensive overview image with multiple render modes
     ''' </summary>
     Private Sub ExportOverviewImage()
-        If currentMap Is Nothing Then
+        If currentMap Is Nothing OrElse mapRenderer Is Nothing Then
             MessageBox.Show("Please load a map first.", "No Map Loaded", MessageBoxButtons.OK, MessageBoxIcon.Information)
             Return
         End If
@@ -117,6 +169,8 @@ Partial Public Class fMain
         ' between Show and the explicit Close left the progress dialog stuck
         ' on screen.
         Dim progressForm As Form = Nothing
+        Dim modeImages As New List(Of Bitmap)()
+        Dim originalRendererMode As MapRenderer.MapRenderMode = mapRenderer.RenderMode
 
         Try
             ' Create a progress form
@@ -135,20 +189,11 @@ Partial Public Class fMain
             progressForm.Show(Me)
             Application.DoEvents()
 
-            ' Remember original render mode
-            Dim originalRenderMode As RenderMode = CurrentRenderMode
-
             ' Define scale for small images
             Dim scale As Double = 0.125 ' 12.5% size
 
             ' Generate output filename for the overview image
             Dim overviewFilename As String = Path.Combine(currentMapPath, Path.GetFileNameWithoutExtension(currentMapFile) & "_overview.jpg")
-
-            ' Check if overview file already exists and delete it if it does
-            If File.Exists(overviewFilename) Then
-                Debug.WriteLine($"Overview file already exists, deleting: {overviewFilename}")
-                File.Delete(overviewFilename)
-            End If
 
             ' Array of render modes to include
             Dim renderModes As RenderMode() = {
@@ -159,42 +204,23 @@ Partial Public Class fMain
                 RenderMode.CellTypeAll
             }
 
-            ' Generate filenames for each render mode image
-            Dim modeFilenames As New List(Of String)()
-
-            ' Generate each render mode image
+            ' Render each mode straight to memory. This used to export each one
+            ' as <map>_<mode>_small.jpg via ExportImageCustomSize (overwriting
+            ' the user's own small exports and showing an "Export Complete"
+            ' box per mode) and then read the files back. Only the renderer's
+            ' mode is switched; the editor's CurrentRenderMode and tool state
+            ' are untouched, and the Finally restores the renderer.
             For Each mode In renderModes
                 lblStatus.Text = $"Rendering {mode}..."
                 Application.DoEvents()
 
-                ' Switch to this render mode
-                CurrentRenderMode = mode
                 mapRenderer.RenderMode = CType(mode, MapRenderer.MapRenderMode)
-
-                ' Generate filename suffix based on render mode
-                Dim modeSuffix As String = "_" & mode.ToString() & "_small"
-
-                ' Export this render mode to disk
-                ExportImageCustomSize(scale, "small")
-
-                ' Store the filename that was generated
-                Dim modeFilename As String = Path.Combine(currentMapPath, Path.GetFileNameWithoutExtension(currentMapFile) & "_" & mode.ToString() & "_small.jpg")
-                modeFilenames.Add(modeFilename)
+                modeImages.Add(RenderExportBitmap(scale, ExportGridMode.None))
             Next
 
             ' Now create the composite overview image
             lblStatus.Text = "Creating overview image..."
             Application.DoEvents()
-
-            ' Load the individual mode images
-            Dim modeImages As New List(Of Bitmap)()
-            For Each filename In modeFilenames
-                If File.Exists(filename) Then
-                    modeImages.Add(New Bitmap(filename))
-                Else
-                    Throw New FileNotFoundException($"Cannot find render mode image: {filename}")
-                End If
-            Next
 
             ' Get dimensions of the first image to calculate layout
             Dim smallImageWidth As Integer = modeImages(0).Width
@@ -238,7 +264,9 @@ Partial Public Class fMain
                             infoG.SmoothingMode = Drawing2D.SmoothingMode.AntiAlias
 
                             ' Draw border
-                            infoG.DrawRectangle(New Pen(System.Drawing.Color.DarkGray, 1), 0, 0, smallImageWidth - 1, smallImageHeight - 1)
+                            Using borderPen As New Pen(System.Drawing.Color.DarkGray, 1)
+                                infoG.DrawRectangle(borderPen, 0, 0, smallImageWidth - 1, smallImageHeight - 1)
+                            End Using
 
                             ' Draw info text 
                             Using titleFont As New Font("Arial", 16, FontStyle.Bold)
@@ -286,23 +314,10 @@ Partial Public Class fMain
                     End Using
                 End Using
 
-                ' Save as JPEG with high quality
-                Dim jpegEncoder As ImageCodecInfo = GetEncoder(ImageFormat.Jpeg)
-                Using encoderParameters As New EncoderParameters(1)
-                    encoderParameters.Param(0) = New EncoderParameter(Encoder.Quality, 95L)
-                    compositeImage.Save(overviewFilename, jpegEncoder, encoderParameters)
-                End Using
+                ' Save as JPEG with high quality, via a temp file so a failure
+                ' keeps any previous overview intact.
+                SaveJpegSafely(compositeImage, overviewFilename)
             End Using
-
-            ' Dispose all loaded images
-            For Each img In modeImages
-                img.Dispose()
-            Next
-
-            ' Restore original render mode
-            CurrentRenderMode = originalRenderMode
-            mapRenderer.RenderMode = CType(originalRenderMode, MapRenderer.MapRenderMode)
-            pnlMap.Invalidate()
 
             ' Close progress form
             progressForm.Close()
@@ -317,6 +332,14 @@ Partial Public Class fMain
             MessageBox.Show("Error exporting overview image: " & ex.Message, "Export Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
             Debug.WriteLine($"Export Overview error: {ex}")
         Finally
+            ' Always free the per-mode bitmaps and put the renderer back in the
+            ' mode the editor is showing, success or failure.
+            For Each img In modeImages
+                img.Dispose()
+            Next
+            mapRenderer.RenderMode = originalRendererMode
+            pnlMap.Invalidate()
+
             ' Safety net for the exception path. On the happy path the form
             ' was already Closed (and modeless forms auto-dispose on Close),
             ' so IsDisposed is true here and we do nothing.

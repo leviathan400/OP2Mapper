@@ -20,6 +20,20 @@ Partial Public Class fMain
 
 #Region "Map Panel Events"
 
+    ''' <summary>
+    ''' True while the left button is held after picking the copy start tile.
+    ''' Releasing on a different tile completes the copy (drag-select);
+    ''' releasing on the start tile leaves the second click to finish it.
+    ''' </summary>
+    Private isCopyDragging As Boolean = False
+
+    ''' <summary>
+    ''' Tile under the mouse while choosing the copy's second corner (-1 = none).
+    ''' The live selection rectangle runs from CopyStart to here.
+    ''' </summary>
+    Private copyHoverX As Integer = -1
+    Private copyHoverY As Integer = -1
+
 
 
     ''' <summary>
@@ -63,6 +77,15 @@ Partial Public Class fMain
                             GlobalVariables.CopyStartY = mapCoords.Y
                             GlobalVariables.CopyStage = 1
 
+                            ' Start the live selection. Dragging and releasing
+                            ' completes the copy in MouseUp; a plain click waits
+                            ' for a second click, with the rectangle following
+                            ' the mouse in the meantime.
+                            isCopyDragging = True
+                            copyHoverX = mapCoords.X
+                            copyHoverY = mapCoords.Y
+                            InvalidateCopySelection()
+
                             ' Update visual indicator
                             UpdateToolDisplay(System.Drawing.Color.DarkGreen, "Copy start position selected")
 
@@ -75,22 +98,7 @@ Partial Public Class fMain
                             Return
                         ElseIf GlobalVariables.CopyStage = 1 Then
                             ' Second click - set end position and complete copy
-                            GlobalVariables.CopyEndX = mapCoords.X
-                            GlobalVariables.CopyEndY = mapCoords.Y
-                            GlobalVariables.CopyStage = 2
-
-                            ' Update visual indicator
-                            UpdateToolDisplay(System.Drawing.Color.DarkBlue, "Copy end position selected")
-
-                            ' Log the selection
-                            Dim tileData As TileData = TileData.FromMap(currentMap, mapCoords.X, mapCoords.Y)
-                            Debug.WriteLine($"Tile Copy end tile selected: ({mapCoords.X},{mapCoords.Y}) - " &
-                            $"Tileset: {tileData.TilesetIndex}, Image: {tileData.ImageIndex}")
-
-                            ' Perform the actual copy
-                            CompleteCopyOperation()
-
-                            UpdateToolAndPlacementLabels()
+                            FinishCopySelection(mapCoords.X, mapCoords.Y)
                             Return
                         End If
                     End If
@@ -103,6 +111,8 @@ Partial Public Class fMain
                     If toolSelected Then
                         ' Record this as the starting point for dragging edit operations
                         isEditDragging = True
+                        ' Everything painted until mouse-up is one undo step.
+                        BeginEditStroke()
                         lastEditTileX = mapCoords.X
                         lastEditTileY = mapCoords.Y
 
@@ -166,11 +176,17 @@ Partial Public Class fMain
             Return
         End If
 
+        ' Cell types go along only when Edit → Paste Includes Cell Types is on
+        ' and the copy captured them.
+        Dim cellTypes As CellType(,) = Nothing
+        If GlobalVariables.PasteCellTypes Then cellTypes = GlobalVariables.CopiedCellTypes
+
         ' Create a command to represent the entire paste operation
         Dim pasteCommand As New PasteTileMappingsCommand(currentMap, startX, startY,
                                                   GlobalVariables.CopiedTileMappings,
                                                   GlobalVariables.CopiedRegionWidth,
-                                                  GlobalVariables.CopiedRegionHeight)
+                                                  GlobalVariables.CopiedRegionHeight,
+                                                  cellTypes)
 
         ' Execute the command (this adds it to the undo stack)
         ExecuteCommand(pasteCommand)
@@ -197,6 +213,15 @@ Partial Public Class fMain
 
         ' Use the coordinate translation function to get map coordinates
         Dim mapCoords As Point = ScreenToMapCoordinates(e.X, e.Y)
+
+        ' Choosing the copy's second corner: grow the live selection to the
+        ' tile under the mouse. Clamped to the map, so dragging past the edge
+        ' (the panel keeps the mouse captured while the button is held)
+        ' selects up to the edge.
+        If GlobalVariables.EditModeEnabled AndAlso GlobalVariables.IsCopyMode AndAlso
+           GlobalVariables.CopyStage = 1 AndAlso Not isDragging Then
+            UpdateCopyHover(mapCoords)
+        End If
 
         ' Check if coordinates are valid
         If mapCoords.X >= 0 AndAlso mapCoords.Y >= 0 AndAlso
@@ -256,6 +281,12 @@ Partial Public Class fMain
 
             End If
 
+            ' Safety net: if the left button was released somewhere we never
+            ' saw (e.g. over a modal dialog), end the drag instead of painting.
+            If isEditDragging AndAlso (Control.MouseButtons And MouseButtons.Left) = 0 Then
+                EndEditDrag()
+            End If
+
             ' Handle edit dragging if enabled and left mouse button is down
             If isEditDragging AndAlso GlobalVariables.EditModeEnabled AndAlso Not GlobalVariables.SingleTileEditMode Then
                 ' Only process if the tile has changed from the last one we edited
@@ -311,10 +342,20 @@ Partial Public Class fMain
     ''' </summary>
     Private Sub MapPanel_MouseUp(sender As Object, e As MouseEventArgs)
         If e.Button = MouseButtons.Left Then
-            ' End edit dragging
-            isEditDragging = False
-            lastEditTileX = -1
-            lastEditTileY = -1
+            ' End edit dragging and commit the stroke as one undo step
+            EndEditDrag()
+
+            ' Drag-select: releasing on a different tile from the start
+            ' completes the copy there. Releasing on the start tile was a plain
+            ' click, so the copy waits for a second click instead.
+            If isCopyDragging Then
+                isCopyDragging = False
+                If GlobalVariables.IsCopyMode AndAlso GlobalVariables.CopyStage = 1 AndAlso
+                   copyHoverX >= 0 AndAlso copyHoverY >= 0 AndAlso
+                   (copyHoverX <> GlobalVariables.CopyStartX OrElse copyHoverY <> GlobalVariables.CopyStartY) Then
+                    FinishCopySelection(copyHoverX, copyHoverY)
+                End If
+            End If
         ElseIf e.Button = MouseButtons.Right Then
             ' Calculate drag distance more precisely
             Dim dragDistance As Double = Math.Sqrt(
@@ -331,11 +372,12 @@ Partial Public Class fMain
             ' Reset cursor
             pnlMap.Cursor = Cursors.Default
 
-            ' Only show context menu if it wasn't a drag and we have a map loaded
-            If Not wasDrag AndAlso currentMap IsNot Nothing Then
-                ' Show context menu
-                mapContextMenu.Show(pnlMap, e.Location)
-            End If
+            ' The menu itself is opened by WinForms (pnlMap.ContextMenuStrip)
+            ' on the WM_CONTEXTMENU that follows this button-up. Showing it
+            ' here as well opened it twice, and by then the drag flags above
+            ' were already reset so the Opening guard couldn't tell a pan from
+            ' a click. Leave a one-shot flag for the Opening handler instead.
+            suppressNextContextMenu = wasDrag
 
             ' Reset the start position
             rightClickStartPosition = Point.Empty
@@ -352,10 +394,11 @@ Partial Public Class fMain
             Return
         End If
 
-        ' Define the buffer size in pixels based on zoom level
+        ' One tile of buffer (in map pixels) around the clip rect covers tiles
+        ' straddling its edge and rounding below. It used to be 10/zoom tiles
+        ' on each side, which at low zoom re-rendered the whole map every paint.
         Const BaseTileSize As Integer = 32  ' Standard tile size
-        Dim scaledBufferInTiles As Integer = CInt(Math.Ceiling(10 / zoomLevel))  ' More buffer at lower zoom
-        Dim bufferSize As Integer = scaledBufferInTiles * BaseTileSize
+        Const bufferSize As Integer = BaseTileSize
 
         ' Render only the area WinForms says needs repainting. e.ClipRectangle
         ' is the union of every Invalidate(...) call since the last paint. By
@@ -365,21 +408,49 @@ Partial Public Class fMain
         ' paint regardless. e.ClipRectangle is in screen pixels; convert to
         ' map-pixel (unscaled) coordinates for MapRenderer.
         Dim clip As Rectangle = e.ClipRectangle
-        Dim viewportRect As New Rectangle(
-            CInt((clip.X - offsetX) / zoomLevel) - bufferSize,
-            CInt((clip.Y - offsetY) / zoomLevel) - bufferSize,
-            CInt(clip.Width / zoomLevel) + (bufferSize * 2),
-            CInt(clip.Height / zoomLevel) + (bufferSize * 2))
+        Dim leftPx As Integer = CInt(Math.Floor((clip.Left - offsetX) / zoomLevel)) - bufferSize
+        Dim topPx As Integer = CInt(Math.Floor((clip.Top - offsetY) / zoomLevel)) - bufferSize
+        Dim rightPx As Integer = CInt(Math.Ceiling((clip.Right - offsetX) / zoomLevel)) + bufferSize
+        Dim bottomPx As Integer = CInt(Math.Ceiling((clip.Bottom - offsetY) / zoomLevel)) + bufferSize
 
-        ' Render the visible part of the map using the MapRenderer
-        Using mapImage As Bitmap = mapRenderer.RenderMap(viewportRect, zoomLevel)
-            ' Screen position of the bitmap's top-left = viewport top-left in
-            ' map space, transformed back to screen space (× zoom + offset).
-            Dim drawX As Integer = CInt(viewportRect.X * zoomLevel) + offsetX
-            Dim drawY As Integer = CInt(viewportRect.Y * zoomLevel) + offsetY
+        ' Start the rendered area on a map pixel that lands exactly on a screen
+        ' pixel at this zoom. Otherwise, at fractional zooms (75%, 125%, 10%)
+        ' the bitmap's position was rounded and each repainted patch could sit
+        ' up to half a pixel off the surrounding map, leaving hairline seams.
+        Dim alignStep As Integer = GetZoomAlignedStep()
+        leftPx = FloorToMultiple(leftPx, alignStep)
+        topPx = FloorToMultiple(topPx, alignStep)
+        Dim viewportRect As Rectangle = Rectangle.FromLTRB(leftPx, topPx, rightPx, bottomPx)
 
-            ' Draw the rendered map at the adjusted position
-            e.Graphics.DrawImage(mapImage, drawX, drawY)
+        ' Never allocate bitmap area for space outside the map (the margins
+        ' around it, or most of the panel when zoomed far out).
+        Dim mapBounds As New Rectangle(0, 0,
+            CInt(currentMap.WidthInTiles()) * BaseTileSize,
+            CInt(currentMap.HeightInTiles()) * BaseTileSize)
+        viewportRect.Intersect(mapBounds)
+
+        ' The off-map margin used to be covered by the (black-cleared) render
+        ' bitmap; keep it black now that the bitmap is clipped to the map.
+        e.Graphics.FillRectangle(Brushes.Black, clip)
+
+        Dim hasMapArea As Boolean =
+            viewportRect.Width > 0 AndAlso viewportRect.Height > 0 AndAlso
+            CInt(viewportRect.Width * zoomLevel) > 0 AndAlso CInt(viewportRect.Height * zoomLevel) > 0
+
+        ' Render the visible part of the map using the MapRenderer (skipped
+        ' when the dirty region is entirely off the map; overlays still draw).
+        Using mapImage As Bitmap = If(hasMapArea, mapRenderer.RenderMap(viewportRect, zoomLevel), Nothing)
+            If mapImage IsNot Nothing Then
+                ' Screen position of the bitmap's top-left = viewport top-left in
+                ' map space, transformed back to screen space (× zoom + offset).
+                ' The viewport was aligned above so this is a whole number; the
+                ' Round only absorbs floating-point noise.
+                Dim drawX As Integer = CInt(Math.Round(viewportRect.X * zoomLevel)) + offsetX
+                Dim drawY As Integer = CInt(Math.Round(viewportRect.Y * zoomLevel)) + offsetY
+
+                ' Draw the rendered map at the adjusted position
+                e.Graphics.DrawImage(mapImage, drawX, drawY)
+            End If
 
             ' Overlays below are drawn directly on e.Graphics — GDI+ clips
             ' each call to e.ClipRectangle automatically, so they only paint
@@ -429,6 +500,13 @@ Partial Public Class fMain
                         GlobalVariables.TileGroupHeight * 32 * zoomLevel)
             End If
 
+            ' Copy selection: the live rectangle while choosing the second
+            ' corner, then the copied area until the copy confirmation clears.
+            Dim copyArea As Rectangle = GetCopySelectionTiles()
+            If Not copyArea.IsEmpty Then
+                DrawCopySelection(e.Graphics, copyArea)
+            End If
+
             ' Draw selection rectangle if a tile is selected
             If currentTileX >= 0 AndAlso currentTileY >= 0 AndAlso
                 currentTileX < currentMap.WidthInTiles() AndAlso currentTileY < currentMap.HeightInTiles() Then
@@ -457,6 +535,13 @@ Partial Public Class fMain
         ' and is conventionally all-Impassable. Locked by default, but the user
         ' can flip My.Settings.AllowEditLastRow to override (some maps need it).
         If mapY = GlobalVariables.MapLastRowIndex AndAlso Not My.Settings.AllowEditLastRow Then
+            ' End any drag in progress BEFORE showing the modal box: the mouse
+            ' release goes to the dialog, so MapPanel_MouseUp never runs and
+            ' isEditDragging would otherwise stay True — making plain mouse
+            ' movement keep painting after OK is clicked.
+            EndEditDrag()
+            pnlMap.Capture = False
+
             MessageBox.Show(
                 "Cant edit bottom row. This row is not visible in game and all cell types should be Impassable.",
                 "Cannot Edit Last Row", MessageBoxButtons.OK, MessageBoxIcon.Warning)
@@ -570,6 +655,157 @@ Partial Public Class fMain
 
 
 
+#Region "Copy selection rectangle"
+
+    ''' <summary>Font for the W×H label on the copy selection.</summary>
+    Private Shared ReadOnly CopyLabelFont As New Font("Segoe UI", 9.0F, FontStyle.Bold)
+
+    ''' <summary>
+    ''' The copy selection in tile coordinates (inclusive corners normalised into
+    ''' a rectangle), or Rectangle.Empty when there's nothing to show:
+    ''' stage 1 = start tile to the tile under the mouse;
+    ''' stage 2 = the area just copied, until the confirmation timer resets it.
+    ''' </summary>
+    Private Function GetCopySelectionTiles() As Rectangle
+        If Not GlobalVariables.IsCopyMode OrElse
+           GlobalVariables.CopyStartX < 0 OrElse GlobalVariables.CopyStartY < 0 Then
+            Return Rectangle.Empty
+        End If
+
+        Dim endX As Integer, endY As Integer
+        If GlobalVariables.CopyStage = 1 Then
+            If copyHoverX < 0 OrElse copyHoverY < 0 Then Return Rectangle.Empty
+            endX = copyHoverX
+            endY = copyHoverY
+        ElseIf GlobalVariables.CopyStage = 2 Then
+            If GlobalVariables.CopyEndX < 0 OrElse GlobalVariables.CopyEndY < 0 Then Return Rectangle.Empty
+            endX = GlobalVariables.CopyEndX
+            endY = GlobalVariables.CopyEndY
+        Else
+            Return Rectangle.Empty
+        End If
+
+        Return Rectangle.FromLTRB(Math.Min(GlobalVariables.CopyStartX, endX),
+                                  Math.Min(GlobalVariables.CopyStartY, endY),
+                                  Math.Max(GlobalVariables.CopyStartX, endX) + 1,
+                                  Math.Max(GlobalVariables.CopyStartY, endY) + 1)
+    End Function
+
+    ''' <summary>
+    ''' Screen-pixel area covering the copy selection, its border and its size
+    ''' label, for invalidating. Empty if there's no selection.
+    ''' </summary>
+    Private Function GetCopySelectionScreenBounds(tiles As Rectangle) As Rectangle
+        If tiles.IsEmpty Then Return Rectangle.Empty
+        Dim topLeft As Rectangle = MapToScreenCoordinates(tiles.Left, tiles.Top)
+        Dim bottomRight As Rectangle = MapToScreenCoordinates(tiles.Right - 1, tiles.Bottom - 1)
+        Dim r As Rectangle = Rectangle.FromLTRB(topLeft.Left, topLeft.Top, bottomRight.Right, bottomRight.Bottom)
+        r.Inflate(3, 3)
+        ' The label sits at the top-left corner and can be wider than a small
+        ' selection; include room for it.
+        Return Rectangle.Union(r, New Rectangle(topLeft.Left - 3, topLeft.Top - 3, 110, 26))
+    End Function
+
+    ''' <summary>
+    ''' Repaints the area of the current copy selection (call before and after
+    ''' it changes, so the old rectangle is erased and the new one drawn).
+    ''' </summary>
+    Private Sub InvalidateCopySelection()
+        Dim bounds As Rectangle = GetCopySelectionScreenBounds(GetCopySelectionTiles())
+        If Not bounds.IsEmpty Then pnlMap.Invalidate(bounds)
+    End Sub
+
+    ''' <summary>
+    ''' Moves the live copy selection's second corner to the tile under the
+    ''' mouse (clamped to the map) and repaints only what changed.
+    ''' </summary>
+    Private Sub UpdateCopyHover(mapCoords As Point)
+        Dim x As Integer = Math.Max(0, Math.Min(CInt(currentMap.WidthInTiles()) - 1, mapCoords.X))
+        Dim y As Integer = Math.Max(0, Math.Min(CInt(currentMap.HeightInTiles()) - 1, mapCoords.Y))
+        If x = copyHoverX AndAlso y = copyHoverY Then Return
+
+        InvalidateCopySelection()          ' erase the old rectangle
+        copyHoverX = x
+        copyHoverY = y
+        InvalidateCopySelection()          ' draw the new one
+
+        Dim w As Integer = Math.Abs(x - GlobalVariables.CopyStartX) + 1
+        Dim h As Integer = Math.Abs(y - GlobalVariables.CopyStartY) + 1
+        lblCurrentPlacement.Text = $"Selecting {w}x{h} tiles to copy"
+    End Sub
+
+    ''' <summary>
+    ''' Erases the copy selection rectangle and forgets the live corner. Call
+    ''' before copy mode's state is reset, while it still describes the area.
+    ''' </summary>
+    Private Sub ClearCopySelectionDisplay()
+        InvalidateCopySelection()
+        isCopyDragging = False
+        copyHoverX = -1
+        copyHoverY = -1
+    End Sub
+
+    ''' <summary>
+    ''' Completes the copy with the given tile as the second corner: used by
+    ''' both the second click and the release of a drag-select.
+    ''' </summary>
+    Private Sub FinishCopySelection(endX As Integer, endY As Integer)
+        InvalidateCopySelection()          ' erase the live rectangle
+
+        GlobalVariables.CopyEndX = endX
+        GlobalVariables.CopyEndY = endY
+        GlobalVariables.CopyStage = 2
+        isCopyDragging = False
+        copyHoverX = -1
+        copyHoverY = -1
+
+        ' Update visual indicator
+        UpdateToolDisplay(System.Drawing.Color.DarkBlue, "Copy end position selected")
+        Debug.WriteLine($"Tile Copy end tile selected: ({endX},{endY})")
+
+        ' Perform the actual copy
+        CompleteCopyOperation()
+        UpdateToolAndPlacementLabels()
+
+        InvalidateCopySelection()          ' show the copied area
+    End Sub
+
+    ''' <summary>
+    ''' Draws the copy selection: a translucent fill, a dashed outline, and a
+    ''' W×H label. Green while selecting, blue once copied.
+    ''' </summary>
+    Private Sub DrawCopySelection(g As Graphics, tiles As Rectangle)
+        Dim topLeft As Rectangle = MapToScreenCoordinates(tiles.Left, tiles.Top)
+        Dim bottomRight As Rectangle = MapToScreenCoordinates(tiles.Right - 1, tiles.Bottom - 1)
+        Dim r As Rectangle = Rectangle.FromLTRB(topLeft.Left, topLeft.Top, bottomRight.Right, bottomRight.Bottom)
+
+        Dim copied As Boolean = (GlobalVariables.CopyStage = 2)
+        Dim colour As System.Drawing.Color = If(copied, System.Drawing.Color.DeepSkyBlue, System.Drawing.Color.Lime)
+
+        Using fill As New SolidBrush(System.Drawing.Color.FromArgb(50, colour))
+            g.FillRectangle(fill, r)
+        End Using
+        ' Black under a dashed colour line, so it shows on any terrain.
+        Using shadow As New Pen(System.Drawing.Color.Black, 3)
+            g.DrawRectangle(shadow, r)
+        End Using
+        Using outline As New Pen(colour, 2) With {.DashStyle = Drawing2D.DashStyle.Dash}
+            g.DrawRectangle(outline, r)
+        End Using
+
+        ' Size label in the top-left corner
+        Dim label As String = $"{tiles.Width}x{tiles.Height}" & If(copied, " copied", "")
+        Dim size As Size = TextRenderer.MeasureText(label, CopyLabelFont)
+        Dim labelRect As New Rectangle(r.Left + 2, r.Top + 2, size.Width + 4, size.Height)
+        Using back As New SolidBrush(System.Drawing.Color.FromArgb(170, 0, 0, 0))
+            g.FillRectangle(back, labelRect)
+        End Using
+        TextRenderer.DrawText(g, label, CopyLabelFont, labelRect, colour,
+                              TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter)
+    End Sub
+
+#End Region
+
     ''' <summary>
     ''' Handles mouse wheel on the map panel - steps through the fixed zoom levels,
     ''' keeping the map point under the cursor stationary while zooming.
@@ -664,14 +900,38 @@ Partial Public Class fMain
     ''' Returns the rectangle of map tile coordinates currently visible in
     ''' pnlMap. Used by the mini-map's viewport overlay.
     ''' </summary>
-    Private Function GetVisibleTileRect() As Rectangle
-        If currentMap Is Nothing Then Return Rectangle.Empty
+    Private Function GetVisibleTileRect() As RectangleF
+        If currentMap Is Nothing Then Return RectangleF.Empty
 
-        Dim leftTile As Integer = CInt(Math.Floor(-offsetX / (32 * zoomLevel)))
-        Dim topTile As Integer = CInt(Math.Floor(-offsetY / (32 * zoomLevel)))
-        Dim rightTile As Integer = CInt(Math.Ceiling((pnlMap.ClientSize.Width - offsetX) / (32 * zoomLevel)))
-        Dim bottomTile As Integer = CInt(Math.Ceiling((pnlMap.ClientSize.Height - offsetY) / (32 * zoomLevel)))
-        Return New Rectangle(leftTile, topTile, rightTile - leftTile, bottomTile - topTile)
+        ' Exact (fractional) tile coordinates of the panel's edges. These used
+        ' to be rounded out to whole tiles, which made the mini-map's viewport
+        ' box up to a tile too big on every side.
+        Dim tilePx As Single = 32 * zoomLevel
+        Dim leftTile As Single = -offsetX / tilePx
+        Dim topTile As Single = -offsetY / tilePx
+        Dim widthTiles As Single = pnlMap.ClientSize.Width / tilePx
+        Dim heightTiles As Single = pnlMap.ClientSize.Height / tilePx
+        Return New RectangleF(leftTile, topTile, widthTiles, heightTiles)
+    End Function
+
+    ''' <summary>
+    ''' Smallest map-pixel step (a whole number of tiles) whose on-screen size
+    ''' at the current zoom is a whole number of pixels: 32 at most zooms, 160
+    ''' (5 tiles = 16 px) at 10%. Used to align repaints to screen pixels.
+    ''' </summary>
+    Private Function GetZoomAlignedStep() As Integer
+        For tiles As Integer = 1 To 20
+            Dim screenPx As Double = 32.0 * tiles * zoomLevel
+            If Math.Abs(screenPx - Math.Round(screenPx)) < 0.001 Then Return 32 * tiles
+        Next
+        Return 32 ' Unusual zoom: tile-aligned is the best available
+    End Function
+
+    ''' <summary>
+    ''' Rounds value down to a multiple of stepSize (correct for negatives too).
+    ''' </summary>
+    Private Shared Function FloorToMultiple(value As Integer, stepSize As Integer) As Integer
+        Return CInt(Math.Floor(value / CDbl(stepSize))) * stepSize
     End Function
 
     ''' <summary>

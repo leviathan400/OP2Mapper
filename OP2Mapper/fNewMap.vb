@@ -36,7 +36,12 @@ Public Class fNewMap
         ' Make sure the BlankMaps folder is populated before we let the user
         ' pick a size — by the time they click OK, GetBlankMapFileName needs
         ' to find the matching template on disk.
-        GlobalVariables.EnsureBlankMapsExtracted()
+        Dim extractError As String = GlobalVariables.EnsureBlankMapsExtracted()
+        If extractError IsNot Nothing Then
+            ' Previously this was only Debug-logged, and the user later got a
+            ' bare "Could not find blank map template" on OK.
+            MessageBox.Show(extractError, "New Map", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+        End If
 
         ' Set up map size dictionary
         InitializeMapSizes()
@@ -359,10 +364,22 @@ Public Class fNewMap
         'Debug.WriteLine($"  Selected Biome: {SelectedBiome}")
         'Debug.WriteLine($"  Notes: {MapNotes}")
 
+        ' This dialog is modeless, so the user may have edited the current map
+        ' since the unsaved-changes check ran when it opened. Check again now,
+        ' right before the current map gets replaced.
+        If Not fMain.ConfirmDiscardUnsavedChanges() Then
+            DialogResult = DialogResult.None
+            Return
+        End If
+
         ' All validation passed
         DialogResult = DialogResult.OK
 
-        CreateNewMap()
+        If Not CreateNewMap() Then
+            ' Keep the dialog open so the user can retry or cancel.
+            DialogResult = DialogResult.None
+            Return
+        End If
 
         ' Dismiss the New Map dialog and return focus to the main editor.
         ' (fNewMap is shown modeless, so DialogResult.OK alone wouldn't close it.)
@@ -478,9 +495,9 @@ Public Class fNewMap
 
     ''' <summary>
     ''' Loads the matching blank map template into the editor, then initializes
-    ''' it with the selected biome's terrain
+    ''' it with the selected biome's terrain. Returns False if no map was created.
     ''' </summary>
-    Private Sub CreateNewMap()
+    Private Function CreateNewMap() As Boolean
         'Create new map
 
         Dim blankMapFileName As String = GetBlankMapFileName(MapWidth, MapHeight)
@@ -489,7 +506,7 @@ Public Class fNewMap
             Dim errorMsg As String = $"ERROR: No blank map template found for dimensions {MapWidth}x{MapHeight}"
             Debug.WriteLine(errorMsg)
             MessageBox.Show($"Could not find blank map template: blank_{MapWidth}x{MapHeight}.map", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
-            Return
+            Return False
         End If
 
         Dim blankMapPath As String = Path.Combine(BlankMapsPath, blankMapFileName)
@@ -499,12 +516,29 @@ Public Class fNewMap
         ' Load the blank map
         'fMain.currentMap = Map.ReadMap(blankMapPath)
 
-        ' Load the blank map using the LoadMapFile function
-        fMain.LoadMapFile(blankMapPath)
+        ' Load the blank map using the LoadMapFile function. If it fails, stop
+        ' here — otherwise InitializeNewMap would overwrite whatever map was
+        ' loaded before. Templates are kept out of Recent Files so they can't
+        ' be reopened and saved over by accident.
+        If Not fMain.LoadMapFile(blankMapPath, includeInRecentFiles:=False) Then
+            Debug.WriteLine("ERROR: Failed to load blank map template: " & blankMapPath)
+            Return False
+        End If
 
         InitializeNewMap()
 
-    End Sub
+        ' Associate the new map with the user's working directory so it doesn't
+        ' look like it lives in the BlankMaps templates folder. Save Map's
+        ' dialog will default to this path too.
+        fMain.SetMapFileName(FileName, My.Settings.WorkingPath)
+
+        ' LoadMapFile cleared the dirty flag, but the new map has never been
+        ' saved — mark it dirty so closing/opening prompts to save it (and so
+        ' undoing back to an empty history doesn't count as "saved").
+        fMain.MarkNewUnsavedMap()
+
+        Return True
+    End Function
 
 
 #Region "Initialize New Map"
@@ -634,11 +668,6 @@ Public Class fNewMap
 
         ' Update the map display
         fMain.RedrawMap()
-
-        ' Associate the new map with the user's working directory so it doesn't
-        ' look like it lives in the BlankMaps templates folder. Save Map's
-        ' dialog will default to this path too.
-        fMain.SetMapFileName(FileName, My.Settings.WorkingPath)
 
         Debug.WriteLine($"Map initialization complete: {MapName} ({FileName})")
     End Sub

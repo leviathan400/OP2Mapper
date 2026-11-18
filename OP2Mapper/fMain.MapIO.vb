@@ -23,7 +23,9 @@ Partial Public Class fMain
     ''' <summary>
     ''' Loads a map file and initializes the renderer
     ''' </summary>
-    Public Function LoadMapFile(mapFilePath As String) As Boolean
+    ''' <param name="includeInRecentFiles">False for internal loads (e.g. New Map's
+    ''' blank template) that shouldn't appear in the Recent Files menu.</param>
+    Public Function LoadMapFile(mapFilePath As String, Optional includeInRecentFiles As Boolean = True) As Boolean
         Debug.WriteLine("Attempting to load map: " & mapFilePath)
 
         ' Drop the enclosed-areas highlight overlay — its tile list is tied
@@ -54,23 +56,35 @@ Partial Public Class fMain
             End If
         End If
 
+        ' Build the new map and its renderer into locals first. Only once both
+        ' succeed is anything about the current editor state replaced, so a
+        ' file that fails to read (or a renderer that fails to build) leaves
+        ' the previously open map, its renderer and its history intact.
+        Dim newMap As Map
+        Dim newRenderer As MapRenderer
         Try
-            ' Load the map file
-            currentMap = Map.ReadMap(mapFilePath)
+            newMap = Map.ReadMap(mapFilePath)
+            ' The MapRenderer constructor already loads the map's tilesets, so
+            ' there's no separate LoadMapTilesets() call — doing both ran the
+            ' full BMP-load/convert/slice pipeline twice on every map open.
+            newRenderer = New MapRenderer(newMap, resourceManager)
+        Catch ex As Exception
+            MessageBox.Show("Error loading map: " & ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
+            Return False
+        End Try
+
+        Try
+            ' Commit: swap in the new map and renderer.
+            currentMap = newMap
             currentMapPath = Path.GetDirectoryName(mapFilePath)
+            InitializeMapRenderer(newRenderer)
 
             ' Calculate and store the last row index - As its a special row - does no get rendered in-game
-            ' And cellTypes should stay as impassable 
+            ' And cellTypes should stay as impassable
             GlobalVariables.MapLastRowIndex = currentMap.HeightInTiles - 1
 
             Debug.WriteLine($"Map dimensions: Width={currentMap.WidthInTiles()}, Height={currentMap.HeightInTiles}")
             'Debug.WriteLine($"Last row index: {GlobalVariables.MapLastRowIndex}")
-
-            ' Initialize the renderer with the map. The MapRenderer constructor
-            ' already loads the map's tilesets, so there's no separate
-            ' LoadMapTilesets() call here — doing both ran the full
-            ' BMP-load/convert/slice pipeline twice on every map open.
-            InitializeMapRenderer()
 
             ' Check tileset loading status
             ShowTilesetLoadingStatus()
@@ -103,6 +117,9 @@ Partial Public Class fMain
 
             lblTileCount.Text = "Tile Count: " & currentMap.TileCount
             lblZoomLevel.Text = "Zoom Level: 100%"
+
+            ' List the tileset BMPs this map uses in the sidebar
+            UpdateTilesetList()
 
             ' Reset view
             zoomLevel = 1.0F
@@ -146,7 +163,7 @@ Partial Public Class fMain
             RefreshMiniMap()
 
             ' Remember this file for the Recent Files menu.
-            AddToRecentFiles(mapFilePath)
+            If includeInRecentFiles Then AddToRecentFiles(mapFilePath)
 
             ' Refresh display
             pnlMap.Invalidate()
@@ -279,83 +296,19 @@ Partial Public Class fMain
     ''' Creates a fresh MapRenderer for the current map (disposing any previous one)
     ''' and resets the render mode to GameMap.
     ''' </summary>
-    Private Sub InitializeMapRenderer()
-        ' Create new renderer if we're using the MapRenderer class
-        If mapRenderer IsNot Nothing Then
+    Private Sub InitializeMapRenderer(newRenderer As MapRenderer)
+        ' Replace the renderer with one already built for currentMap
+        If mapRenderer IsNot Nothing AndAlso mapRenderer IsNot newRenderer Then
             mapRenderer.Dispose()
         End If
 
-        mapRenderer = New MapRenderer(currentMap, resourceManager)
+        mapRenderer = newRenderer
         mapRenderer.ShowGrid = GlobalVariables.ShowGrid
 
         ' Set global render mode to match
         GlobalVariables.CurrentRenderMode = GlobalVariables.RenderMode.GameMap
 
         mapRenderer.RenderMode = CType(GlobalVariables.CurrentRenderMode, MapRenderer.MapRenderMode)
-
-    End Sub
-
-    ''' <summary>
-    ''' Refreshes titles, labels and menu state for a newly opened map, and turns off
-    ''' edit mode (closing its tool forms) if it was left on from a previous map.
-    ''' </summary>
-    Private Sub UpdateUIForLoadedMap()
-        'We call this when we open a map
-
-        ' Update window title and status bar
-        RefreshWindowTitle()
-        lblToolStripMapName.Text = currentMapFile
-        lblToolStripMapPath.Text = currentMapPath & "\" & currentMapFile
-
-        ' Update property labels
-        lblMapName.Text = "Map Name: " & currentMapFile
-        lblMapSize.Text = "Map Size: " & currentMap.HeightInTiles & " x " & currentMap.WidthInTiles
-
-        ' Add the map image size information
-        Dim mapWidthPixels As Integer = CInt(currentMap.WidthInTiles()) * 32
-        Dim mapHeightPixels As Integer = CInt(currentMap.HeightInTiles()) * 32
-        lblMapImage.Text = "Map Image: " & mapWidthPixels & " x " & mapHeightPixels & " pixels"
-
-        lblTileCount.Text = "Tile Count: " & currentMap.TileCount
-        lblZoomLevel.Text = "Zoom Level: 100%"
-
-        ' Enable menu options
-        EnableMenuOptions(True)
-
-        If EditModeEnabled = True Then
-            'If a map is currently open and we are opening another map, check
-            'if edit mode is currently enabled, if so disable it
-
-            EditModeEnabled = False
-            btnEditMode.Enabled = True
-            btnEditMode.Text = "Enable Edit Mode"
-            btnEditMode.BackColor = SystemColors.Control
-
-            ' Create a list to store forms that need to be closed
-            Dim formsToClose As New List(Of Form)
-
-            ' Find forms to close without modifying the collection yet
-            For Each form As Form In Application.OpenForms
-                If TypeOf form Is fCellTypes OrElse TypeOf form Is fTileSet Then
-                    formsToClose.Add(form)
-                End If
-            Next
-            ' Now close the forms
-            For Each form As Form In formsToClose
-                form.Close()
-            Next
-
-            Debug.WriteLine("Opening map while Edit Mode is Enabled. Disable it.")
-
-        ElseIf EditModeEnabled = False Then
-
-            'Map loaded. Enable Edit Mode button.
-            btnEditMode.Enabled = True
-            btnEditMode.Text = "Enable Edit Mode"
-            btnEditMode.BackColor = SystemColors.Control
-
-        End If
-
 
     End Sub
 
@@ -374,6 +327,39 @@ Partial Public Class fMain
         closeMenuItem.Enabled = enabled
         renderMenu.Enabled = enabled
         imageMenu.Enabled = enabled
+    End Sub
+
+    ''' <summary>
+    ''' Writes the map to a temporary file next to the target, checks it reads
+    ''' back, then swaps it into place. A failure partway through (disk full,
+    ''' file lock, library error) leaves the existing file untouched.
+    ''' </summary>
+    Private Sub WriteMapSafely(mapToWrite As Map, targetPath As String)
+        Dim targetDir As String = Path.GetDirectoryName(Path.GetFullPath(targetPath))
+        ' Keep the .map extension on the temp file in case the writer cares.
+        Dim tempPath As String = Path.Combine(targetDir,
+            Path.GetFileNameWithoutExtension(targetPath) & ".saving-" & Guid.NewGuid().ToString("N").Substring(0, 8) & ".map")
+
+        Try
+            mapToWrite.Write(tempPath)
+
+            ' Sanity check: make sure what we wrote is a readable map before
+            ' it replaces the user's file.
+            Map.ReadMap(tempPath)
+
+            If File.Exists(targetPath) Then
+                ' Atomic swap on the same volume; no backup file kept.
+                File.Replace(tempPath, targetPath, Nothing)
+            Else
+                File.Move(tempPath, targetPath)
+            End If
+        Finally
+            Try
+                If File.Exists(tempPath) Then File.Delete(tempPath)
+            Catch
+                ' Best effort — a leftover temp file is harmless.
+            End Try
+        End Try
     End Sub
 
     ''' <summary>
@@ -401,10 +387,11 @@ Partial Public Class fMain
 
             If saveDialog.ShowDialog() = DialogResult.OK Then
                 Try
-                    currentMap.Write(saveDialog.FileName)
+                    WriteMapSafely(currentMap, saveDialog.FileName)
                     currentMapFile = Path.GetFileName(saveDialog.FileName)
                     currentMapPath = Path.GetDirectoryName(saveDialog.FileName)
-                    SetMapDirty(False)
+                    ' Remember this history position so undo/redo back to it clears "*".
+                    MarkSavePoint()
                     RefreshWindowTitle()
                     MessageBox.Show("Map saved successfully.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information)
                 Catch ex As Exception
@@ -572,6 +559,20 @@ Partial Public Class fMain
         Dim totalNeededTilesets As Integer = 0
 
         If mapRenderer IsNot Nothing Then
+            ' No tileset folder at all: the status counts below are 0/0 (nothing
+            ' was attempted), so without this check the user got no message —
+            ' just a map of grey fallback tiles.
+            If mapRenderer.TilesetDirectory Is Nothing Then
+                MessageBox.Show(
+                    "Could not find the Outpost 2 tileset folder, so the map will show placeholder tiles." & vbCrLf & vbCrLf &
+                    "Looked in these folders under the Outpost 2 path:" & vbCrLf &
+                    "  OPU\base\tilesets" & vbCrLf & "  base\tilesets" & vbCrLf & "  tilesets" & vbCrLf & vbCrLf &
+                    "Outpost 2 path: " & If(String.IsNullOrEmpty(My.Settings.OP2Path), "(not set)", My.Settings.OP2Path) & vbCrLf &
+                    "Check it in File → Settings.",
+                    "Tilesets Not Found", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+                Return
+            End If
+
             ' Get tileset loading status from MapRenderer
             Dim status = mapRenderer.GetTilesetLoadingStatus()
             loadedTilesets = status.Item1

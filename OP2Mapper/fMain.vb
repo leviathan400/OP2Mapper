@@ -56,6 +56,9 @@ Public Class fMain
     Private isRightDragging As Boolean = False
     ' Track right mouse behavior
     Private rightClickStartPosition As Point = Point.Empty
+    ' Set on right-button-up after a pan so the context menu WinForms opens
+    ' next (WM_CONTEXTMENU) is cancelled. Consumed by MapContextMenu_Opening.
+    Private suppressNextContextMenu As Boolean = False
 
     ' Selection and UI state
     Private currentTileX As Integer = -1
@@ -167,6 +170,25 @@ Public Class fMain
         Me.Icon = My.Resources.IconLarge
         RefreshWindowTitle()
 
+        ' Command line: [/op2dir <Outpost 2 folder>] [map file]
+        Dim commandLineOp2Dir As String = Nothing
+        Dim commandLineMapFile As String = Nothing
+        ParseCommandLine(commandLineOp2Dir, commandLineMapFile)
+
+        ' An Outpost 2 folder given on the command line replaces the saved one
+        ' (and is saved), so startup skips the first-run folder prompt.
+        If commandLineOp2Dir IsNot Nothing Then
+            If Directory.Exists(commandLineOp2Dir) Then
+                My.Settings.OP2Path = commandLineOp2Dir
+                My.Settings.Save()
+                Debug.WriteLine("Outpost 2 folder from command line: " & commandLineOp2Dir)
+            Else
+                MessageBox.Show("The Outpost 2 folder given on the command line doesn't exist:" &
+                                Environment.NewLine & Environment.NewLine & commandLineOp2Dir,
+                                "Outpost 2 Folder Not Found", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            End If
+        End If
+
         My.Settings.WorkingPath = My.Settings.OP2Path
 
         ' Tile-group export location. Default to <exe>\Tilegroups on first run
@@ -197,6 +219,19 @@ Public Class fMain
             Finally
                 Me.Opacity = 1
             End Try
+
+            ' The mapper can't load tilesets without the Outpost 2 folder, so
+            ' if Settings was cancelled without one, explain and quit.
+            If String.IsNullOrEmpty(My.Settings.OP2Path) OrElse Not Directory.Exists(My.Settings.OP2Path) Then
+                Me.Opacity = 0
+                MessageBox.Show("No Outpost 2 folder is set, so " & ApplicationName & " will now close." &
+                                Environment.NewLine & Environment.NewLine &
+                                "Run it again and choose the Outpost 2 (1.4.1) folder in Settings, " &
+                                "or start it with /op2dir ""<folder>"".",
+                                "No Outpost 2 Folder", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+                Application.Exit()
+                Return
+            End If
         End If
 
         ' Initialize UI
@@ -210,8 +245,8 @@ Public Class fMain
         ' Initialize Labels
         InitializeLabels()
 
-        ' Add tileset info labels
-        AddTilesetInfoLabels()
+        ' Lay out the properties sidebar (sections, previews, buttons)
+        BuildSidebar()
 
         ' Initialize state
         EditModeEnabled = False
@@ -219,10 +254,8 @@ Public Class fMain
 
         picSelectedTool.Hide()
 
-        Dim args = Environment.GetCommandLineArgs()
-        If args.Length > 1 Then
-            Dim filePath = args(1)
-            'Debug.WriteLine("GetCommandLineArgs: " & filePath)
+        If commandLineMapFile IsNot Nothing Then
+            Dim filePath = commandLineMapFile
 
             ' Check if the file exists
             If File.Exists(filePath) Then
@@ -243,6 +276,47 @@ Public Class fMain
 
         'Dim player As New SoundPlayer(My.Resources.earthwrk)
         'player.Play()
+    End Sub
+
+    ''' <summary>
+    ''' Reads the command line. Supported forms, in any order:
+    '''   /op2dir "C:\Games\Outpost 2"     (also -op2dir, --op2dir, /op2dir:path, --op2dir=path)
+    '''   "C:\Maps\mymap.map"              (the first plain argument is a map to open)
+    ''' Returns Nothing for anything not given.
+    ''' </summary>
+    Private Shared Sub ParseCommandLine(ByRef op2Dir As String, ByRef mapFile As String)
+        op2Dir = Nothing
+        mapFile = Nothing
+
+        Dim args() As String = Environment.GetCommandLineArgs()
+        Dim i As Integer = 1   ' args(0) is the exe
+        While i < args.Length
+            Dim arg As String = args(i)
+            Dim name As String = arg.TrimStart("/"c, "-"c)
+
+            If arg.Length > name.Length AndAlso
+               name.StartsWith("op2dir", StringComparison.OrdinalIgnoreCase) Then
+                Dim rest As String = name.Substring("op2dir".Length)
+                If rest.StartsWith(":") OrElse rest.StartsWith("=") Then
+                    ' /op2dir:path or --op2dir=path
+                    op2Dir = rest.Substring(1)
+                ElseIf rest.Length = 0 AndAlso i + 1 < args.Length Then
+                    ' /op2dir path
+                    i += 1
+                    op2Dir = args(i)
+                End If
+
+                ' A quoted path ending in a backslash ("C:\Outpost 2\") reaches
+                ' us with a stray quote, because Windows reads \" as an escaped
+                ' quote. Strip it, and any trailing slash.
+                If op2Dir IsNot Nothing Then op2Dir = op2Dir.Trim().Trim(""""c).TrimEnd("\"c, "/"c)
+                If String.IsNullOrEmpty(op2Dir) Then op2Dir = Nothing
+            ElseIf mapFile Is Nothing Then
+                mapFile = arg
+            End If
+
+            i += 1
+        End While
     End Sub
 
 #Region "Window Snapping (screen edges only)"
@@ -267,6 +341,10 @@ Public Class fMain
     Private Const WMSZ_BOTTOMLEFT As Integer = 7
     Private Const WMSZ_BOTTOMRIGHT As Integer = 8
 
+    ''' <summary>
+    ''' Win32 RECT (screen coordinates) as passed in the WM_MOVING / WM_SIZING
+    ''' lParam; read, adjusted for snapping, then written back.
+    ''' </summary>
     <Runtime.InteropServices.StructLayout(Runtime.InteropServices.LayoutKind.Sequential)>
     Private Structure SNAP_RECT
         Public Left As Integer
@@ -374,6 +452,33 @@ Public Class fMain
     End Sub
 
     ''' <summary>
+    ''' Saves the window position as soon as the user finishes moving or
+    ''' resizing the window (ResizeEnd fires at the end of a move too), so it
+    ''' survives a crash or forced exit, not just a clean close.
+    ''' </summary>
+    Private Sub fMain_ResizeEnd(sender As Object, e As EventArgs) Handles Me.ResizeEnd
+        ToolPaletteHelper.SaveMainFormPosition(Me)
+    End Sub
+
+    ''' <summary>Window state at the last SizeChanged, to spot maximize / restore.</summary>
+    Private lastWindowState As FormWindowState = FormWindowState.Normal
+
+    ''' <summary>
+    ''' Saves the position when the window is maximized or restored. Those
+    ''' (caption buttons, title-bar double-click, Win+Up) don't raise ResizeEnd.
+    ''' </summary>
+    Private Sub fMain_SizeChanged(sender As Object, e As EventArgs) Handles Me.SizeChanged
+        If WindowState = lastWindowState Then Return
+        lastWindowState = WindowState
+
+        ' Skip the state change RestoreMainFormPosition makes during Load
+        ' (the form isn't visible yet), and minimizing, which
+        ' SaveMainFormPosition would store as Normal anyway.
+        If Not Visible OrElse WindowState = FormWindowState.Minimized Then Return
+        ToolPaletteHelper.SaveMainFormPosition(Me)
+    End Sub
+
+    ''' <summary>
     ''' Handles Closing - prompts about unsaved changes (cancelling the close if asked)
     ''' and saves the window position. This is the canonical shutdown hook.
     ''' </summary>
@@ -392,6 +497,11 @@ Public Class fMain
         ' system — Closing has proven reliable (the unsaved-changes prompt
         ' demonstrates it), so this is the canonical save location.
         ToolPaletteHelper.SaveMainFormPosition(Me)
+
+        ' Save the open tool palettes too. Only TileSet is owned by fMain, so
+        ' the other four are destroyed at exit without their own FormClosing
+        ' ever firing; without this their positions were never saved.
+        ToolPaletteHelper.SaveAllToolPositions()
     End Sub
 
     ''' <summary>
@@ -401,9 +511,17 @@ Public Class fMain
     Private Sub ShowSettingsDialog()
         Dim settings As New fSettings()
         If settings.ShowDialog() = DialogResult.OK Then
+            ' The Outpost 2 folder may have changed: reload the edit-mode sound from it next time.
+            editModeSoundPlayer = Nothing
+
             Try
-                ' Initialize resource manager with the selected path
+                ' Initialize resource manager with the selected path, then free
+                ' the old one (ResourceManager is IDisposable). Nothing caches
+                ' the instance: fTileSet reads MapResourceManager on each use,
+                ' and MapRenderer only stores its reference.
+                Dim oldManager As ResourceManager = resourceManager
                 resourceManager = New ResourceManager(My.Settings.OP2Path)
+                If oldManager IsNot Nothing Then oldManager.Dispose()
             Catch ex As Exception
                 MessageBox.Show("Error initializing resource manager: " & ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
             End Try
@@ -425,6 +543,9 @@ Public Class fMain
         lblCoordinates.Text = "Coordinates: N/A"
         lblCellType.Text = "Cell Type: N/A"
         lblZoomLevel.Text = "Zoom Level: N/A"
+
+        ' Empty the Tilesets list (no map loaded)
+        UpdateTilesetList()
 
         ' Initialize tool and placement labels
         lblCurrentTool.Text = "No Tool Selected"
@@ -585,6 +706,20 @@ Public Class fMain
         }
         AddHandler pasteMenuItem.Click, AddressOf Paste_Click
         editMenu.DropDownItems.Add(pasteMenuItem)
+
+        ' Whether a paste also writes the copied cell types (on by default).
+        ' Copies always capture cell types, so this can be changed after copying.
+        ' Remembered in Mapper3.ini.
+        GlobalVariables.PasteCellTypes = Not String.Equals(
+            ToolPaletteHelper.ReadToolSetting(KeyPasteCellTypes, "True"), "False",
+            StringComparison.OrdinalIgnoreCase)
+        Dim pasteCellTypesMenuItem As New ToolStripMenuItem("Paste Includes Cell Types") With {
+            .Name = "mnuPasteCellTypes",
+            .CheckOnClick = True,
+            .Checked = GlobalVariables.PasteCellTypes
+        }
+        AddHandler pasteCellTypesMenuItem.CheckedChanged, AddressOf PasteCellTypes_CheckedChanged
+        editMenu.DropDownItems.Add(pasteCellTypesMenuItem)
 
         editMenu.DropDownItems.Add(New ToolStripSeparator())
 
@@ -856,6 +991,14 @@ Public Class fMain
     ''' loaded, records the open location, and syncs the checked states.
     ''' </summary>
     Private Sub MapContextMenu_Opening(sender As Object, e As System.ComponentModel.CancelEventArgs)
+        ' Right-button-up just ended a pan: this is the menu WinForms opens
+        ' for that release — don't show it.
+        If suppressNextContextMenu Then
+            suppressNextContextMenu = False
+            e.Cancel = True
+            Return
+        End If
+
         ' If we're in the middle of a drag operation, cancel the menu
         If isDragging OrElse isRightDragging Then
             e.Cancel = True
@@ -906,84 +1049,270 @@ Public Class fMain
         ToggleCoordinates()
     End Sub
 
+    ' ---- Sidebar layout ----------------------------------------------------
+    ' The properties sidebar is laid out here, in code, as a stack of titled
+    ' sections. The designer still creates the labels and picture boxes (other
+    ' code refers to them by name); this moves them into the sections.
+
+    ''' <summary>Width of the sidebar panel.</summary>
+    Private Const SidebarWidth As Integer = 264
+    ''' <summary>Gap at the sidebar's edges.</summary>
+    Private Const SidebarMargin As Integer = 6
+    ''' <summary>Vertical gap between sidebar sections.</summary>
+    Private Const SidebarSectionGap As Integer = 14
     ''' <summary>
-    ''' Adds the runtime-created controls to the properties panel: tile preview boxes,
-    ''' Reset Zoom button, and the Edit Mode / Clear Tool buttons.
+    ''' Most tilesets the Tilesets list shows before it scrolls. Typical maps
+    ''' use 10-16, so they all show at once.
     ''' </summary>
-    Private Sub AddTilesetInfoLabels()
-        ' Define starting Y position
-        Dim yPos As Integer = 240
+    Private Const MaxTilesetRows As Integer = 20
 
-        ' Add tile preview label
-        Dim lblTilePreview As New Label With {
-        .Text = "Tile Preview:",
-        .AutoSize = True,
-        .Location = New Point(10, yPos)
-    }
-        pnlProperties.Controls.Add(lblTilePreview)
+    ''' <summary>The sidebar sections, top to bottom (see RestackSidebar).</summary>
+    Private ReadOnly sidebarSections As New List(Of GroupBox)
+    ''' <summary>Height of one line of text in a sidebar section.</summary>
+    Private Const SidebarLineHeight As Integer = 17
 
-        ' Configure the tile preview picture boxes
+    ''' <summary>List of the tileset BMPs the loaded map uses (Tilesets section).</summary>
+    Private lstTilesets As ListBox
+    ''' <summary>The Tilesets section, whose title shows the tileset count.</summary>
+    Private grpTilesets As GroupBox
+
+    ''' <summary>
+    ''' Builds the properties sidebar: Map, Tilesets, Tile Under Cursor, View
+    ''' and Editing sections stacked top to bottom. The sidebar scrolls when
+    ''' the window is too short to show it all.
+    ''' </summary>
+    Private Sub BuildSidebar()
+        pnlProperties.SuspendLayout()
+        pnlProperties.Width = SidebarWidth
+        pnlProperties.AutoScroll = True
+
+        ' Leave room for a vertical scrollbar so sections never need a
+        ' horizontal one.
+        Dim sectionWidth As Integer = SidebarWidth - SystemInformation.VerticalScrollBarWidth - SidebarMargin * 2
+        Dim innerWidth As Integer = sectionWidth - 16
+        Dim y As Integer = SidebarMargin
+
+        ' --- Map ---
+        Dim grpMap As GroupBox = AddSidebarSection("Map", y, sectionWidth)
+        Dim rowY As Integer = AddSidebarLabels(grpMap, innerWidth, lblMapName, lblMapSize, lblMapImage, lblTileCount)
+        grpMap.Height = rowY + 6
+        y = grpMap.Bottom + SidebarSectionGap
+
+        ' --- Tilesets (new) ---
+        grpTilesets = AddSidebarSection("Tilesets", y, sectionWidth)
+        ' Height is set to fit the map's tilesets by UpdateTilesetList.
+        lstTilesets = New ListBox With {
+            .Name = "lstTilesets",
+            .Location = New Point(8, 20),
+            .Width = innerWidth,
+            .IntegralHeight = False,
+            .HorizontalScrollbar = True,
+            .SelectionMode = SelectionMode.None,
+            .BorderStyle = BorderStyle.FixedSingle
+        }
+        grpTilesets.Controls.Add(lstTilesets)
+        SizeTilesetList(1)
+        y = grpTilesets.Bottom + SidebarSectionGap
+
+        ' --- Tile under the cursor: details plus small and large previews ---
+        Dim grpTile As GroupBox = AddSidebarSection("Tile Under Cursor", y, sectionWidth)
+        rowY = AddSidebarLabels(grpTile, innerWidth, lblCoordinates, lblTileset, lblTilesetImage, lblMappingIndex, lblCellType)
+
         picTilePreview.Name = "picTilePreview"
-        picTilePreview.Size = New Size(32, 32)
-        picTilePreview.Location = New Point(20, yPos + 20)
+        picTilePreview.Size = New Size(34, 34)          ' 32 px tile + border
+        picTilePreview.Location = New Point(8, rowY + 6)
         picTilePreview.BorderStyle = BorderStyle.FixedSingle
         picTilePreview.SizeMode = PictureBoxSizeMode.Normal
         picTilePreview.BackColor = System.Drawing.Color.Black
-        'pnlProperties.Controls.Add(picTilePreview)
+        grpTile.Controls.Add(picTilePreview)
 
         picTilePreviewBig.Name = "picTilePreviewBig"
-        picTilePreviewBig.Size = New Size(96, 96)
-        picTilePreviewBig.Location = New Point(70, yPos + 20)
+        picTilePreviewBig.Size = New Size(98, 98)       ' 96 px (3x) + border
+        picTilePreviewBig.Location = New Point(picTilePreview.Right + 10, rowY + 6)
         picTilePreviewBig.BorderStyle = BorderStyle.FixedSingle
         picTilePreviewBig.SizeMode = PictureBoxSizeMode.StretchImage
         picTilePreviewBig.BackColor = System.Drawing.Color.Black
-        'pnlProperties.Controls.Add(picTilePreview)
+        grpTile.Controls.Add(picTilePreviewBig)
+
+        grpTile.Height = picTilePreviewBig.Bottom + 8
+        y = grpTile.Bottom + SidebarSectionGap
+
+        ' --- View: zoom level and Reset Zoom on one row ---
+        Dim grpView As GroupBox = AddSidebarSection("View", y, sectionWidth)
+        Dim btnResetZoom As New Button With {
+            .Name = "btnResetZoom",
+            .Text = "Reset Zoom",
+            .Size = New Size(84, 24)
+        }
+        btnResetZoom.Location = New Point(sectionWidth - btnResetZoom.Width - 8, 18)
+        AddHandler btnResetZoom.Click, AddressOf ResetZoom_Click
+        grpView.Controls.Add(btnResetZoom)
+        PlaceSidebarLabel(grpView, lblZoomLevel, New Point(8, 22), btnResetZoom.Left - 12)
+        grpView.Height = btnResetZoom.Bottom + 8
+        y = grpView.Bottom + SidebarSectionGap
+
+        ' --- Editing: mode buttons, then the active tool and its icon ---
+        Dim grpEdit As GroupBox = AddSidebarSection("Editing", y, sectionWidth)
+
+        btnEditMode.Name = "btnEditMode"
+        btnEditMode.Text = "Enable Edit Mode"
+        btnEditMode.SetBounds(8, 20, innerWidth, 28)
+        AddHandler btnEditMode.Click, AddressOf EditMode_Click
+        grpEdit.Controls.Add(btnEditMode)
+
+        Dim btnClearTool As New Button With {
+            .Name = "btnClearTool",
+            .Text = "Clear Tool Selection"
+        }
+        btnClearTool.SetBounds(8, btnEditMode.Bottom + 6, innerWidth, 28)
+        AddHandler btnClearTool.Click, AddressOf ClearTool_Click
+        grpEdit.Controls.Add(btnClearTool)
 
         picSelectedTool.Name = "picSelectedTool"
-        picSelectedTool.Size = New Size(32, 32)
-        'picTilePreviewBig.Location = New Point(70, yPos + 20)
+        picSelectedTool.Size = New Size(34, 34)
+        picSelectedTool.Location = New Point(8, btnClearTool.Bottom + 10)
         picSelectedTool.BorderStyle = BorderStyle.FixedSingle
         picSelectedTool.SizeMode = PictureBoxSizeMode.StretchImage
         picSelectedTool.BackColor = System.Drawing.Color.Black
+        grpEdit.Controls.Add(picSelectedTool)
 
-        ' Add Reset Zoom button
-        Dim btnResetZoom As New Button With {
-        .Name = "btnResetZoom",
-        .Text = "Reset Zoom",
-        .Size = New Size(80, 23),
-        .Location = New Point(lblZoomLevel.Location.X + 120, lblZoomLevel.Location.Y - 3)
-    }
-        AddHandler btnResetZoom.Click, AddressOf ResetZoom_Click
-        pnlProperties.Controls.Add(btnResetZoom)
+        ' Tool and placement text sit beside the tool icon.
+        Dim textLeft As Integer = picSelectedTool.Right + 8
+        Dim textWidth As Integer = sectionWidth - textLeft - 8
+        PlaceSidebarLabel(grpEdit, lblCurrentTool, New Point(textLeft, picSelectedTool.Top), textWidth)
+        PlaceSidebarLabel(grpEdit, lblCurrentPlacement, New Point(textLeft, picSelectedTool.Top + SidebarLineHeight), textWidth)
 
-        ' EDITING SECTION
-        Dim lblEditingSeparator As New Label With {
-        .Text = "------- Editing Tools -------",
-        .AutoSize = False,
-        .Width = 220,
-        .Height = 20,
-        .Location = New Point(10, yPos + 130),
-        .TextAlign = ContentAlignment.MiddleCenter
-    }
-        pnlProperties.Controls.Add(lblEditingSeparator)
+        grpEdit.Height = picSelectedTool.Bottom + 10
 
-        ' Add Edit Mode button
-        btnEditMode.Name = "btnEditMode"
-        btnEditMode.Text = "Enable Edit Mode"
-        btnEditMode.Size = New Size(150, 28)
-        btnEditMode.Location = New Point(50, yPos + 160)
-        AddHandler btnEditMode.Click, AddressOf EditMode_Click
-        pnlProperties.Controls.Add(btnEditMode)
+        pnlProperties.ResumeLayout(True)
+    End Sub
 
-        ' Add Clear Tool button
-        Dim btnClearTool As New Button With {
-        .Name = "btnClearTool",
-        .Text = "Clear Tool Selection",
-        .Size = New Size(150, 28),
-        .Location = New Point(50, yPos + 195) ' Position below btnEditMode
-    }
-        AddHandler btnClearTool.Click, AddressOf ClearTool_Click
-        pnlProperties.Controls.Add(btnClearTool)
+    ''' <summary>
+    ''' Adds an empty titled section to the sidebar at the given top position.
+    ''' The caller fills it and sets its height.
+    ''' </summary>
+    Private Function AddSidebarSection(title As String, top As Integer, width As Integer) As GroupBox
+        Dim section As New GroupBox With {
+            .Text = title,
+            .Location = New Point(SidebarMargin, top),
+            .Width = width
+        }
+        pnlProperties.Controls.Add(section)
+        sidebarSections.Add(section)
+        Return section
+    End Function
+
+    ''' <summary>
+    ''' Re-positions the sidebar sections top to bottom with SidebarSectionGap
+    ''' between them. Called when a section changes height (the Tilesets list
+    ''' grows or shrinks with the map's tileset count).
+    ''' </summary>
+    Private Sub RestackSidebar()
+        ' Section positions are relative to the scrolled content, so allow
+        ' for the current scroll offset (AutoScrollPosition.Y is <= 0).
+        Dim y As Integer = SidebarMargin + pnlProperties.AutoScrollPosition.Y
+        For Each section In sidebarSections
+            section.Top = y
+            y = section.Bottom + SidebarSectionGap
+        Next
+    End Sub
+
+    ''' <summary>
+    ''' Sizes the Tilesets list to show the given number of rows (at least one,
+    ''' at most MaxTilesetRows, beyond which it scrolls), sizes its section to
+    ''' match, and moves the sections below.
+    ''' </summary>
+    Private Sub SizeTilesetList(rows As Integer)
+        If lstTilesets Is Nothing Then Return
+        rows = Math.Max(1, Math.Min(MaxTilesetRows, rows))
+
+        ' Rows plus the 1 px border top and bottom; add room for the
+        ' horizontal scrollbar only when a name is too long to fit.
+        Dim height As Integer = rows * lstTilesets.ItemHeight + 4
+        Dim widestItem As Integer = 0
+        For Each item In lstTilesets.Items
+            widestItem = Math.Max(widestItem, TextRenderer.MeasureText(item.ToString(), lstTilesets.Font).Width)
+        Next
+        If widestItem > lstTilesets.Width - 4 Then
+            height += SystemInformation.HorizontalScrollBarHeight
+        End If
+        lstTilesets.Height = height
+        grpTilesets.Height = lstTilesets.Bottom + 8
+        RestackSidebar()
+    End Sub
+
+    ''' <summary>
+    ''' Moves the given labels into a section as one line each, starting just
+    ''' under the section title. Returns the y position below the last line.
+    ''' </summary>
+    Private Function AddSidebarLabels(section As GroupBox, width As Integer, ParamArray labels As Label()) As Integer
+        Dim rowY As Integer = 20
+        For Each lbl As Label In labels
+            PlaceSidebarLabel(section, lbl, New Point(8, rowY), width)
+            rowY += SidebarLineHeight
+        Next
+        Return rowY
+    End Function
+
+    ''' <summary>
+    ''' Moves a label into a section as a fixed-width single line. Text that
+    ''' doesn't fit ends in "…", and hovering the label shows all of it.
+    ''' </summary>
+    Private Sub PlaceSidebarLabel(section As GroupBox, lbl As Label, location As Point, width As Integer)
+        lbl.AutoSize = False
+        lbl.AutoEllipsis = True
+        lbl.SetBounds(location.X, location.Y, width, SidebarLineHeight)
+        section.Controls.Add(lbl)
+    End Sub
+
+    ''' <summary>
+    ''' Fills the Tilesets section with every tileset BMP the loaded map uses,
+    ''' in the map's tileset order, with each one's tile count; a tileset that
+    ''' couldn't be loaded shows "not found". Empties it when no map is loaded.
+    ''' </summary>
+    Private Sub UpdateTilesetList()
+        If lstTilesets Is Nothing Then Return ' Sidebar not built yet
+
+        lstTilesets.BeginUpdate()
+        lstTilesets.Items.Clear()
+
+        Dim count As Integer = 0
+        Dim missing As Integer = 0
+        If currentMap IsNot Nothing Then
+            Dim tileCounts As Dictionary(Of String, Integer) =
+                If(mapRenderer IsNot Nothing, mapRenderer.ListLoadedTilesets(), New Dictionary(Of String, Integer))
+
+            For Each source In currentMap.tilesetSources
+                If source.IsEmpty() Then Continue For
+                count += 1
+
+                Dim name As String = source.tilesetFilename
+                Dim fileName As String = If(name.EndsWith(".bmp", StringComparison.OrdinalIgnoreCase), name, name & ".bmp")
+                Dim tiles As Integer = 0
+                tileCounts.TryGetValue(name, tiles)
+
+                If tiles > 0 Then
+                    lstTilesets.Items.Add($"{fileName}  ({tiles} {If(tiles = 1, "tile", "tiles")})")
+                Else
+                    lstTilesets.Items.Add($"{fileName}  (not found)")
+                    missing += 1
+                End If
+            Next
+        End If
+
+        lstTilesets.EndUpdate()
+
+        ' Grow (or shrink) the list so every tileset shows without scrolling.
+        SizeTilesetList(lstTilesets.Items.Count)
+
+        ' Section title carries the count, and flags any that failed to load.
+        If currentMap Is Nothing Then
+            grpTilesets.Text = "Tilesets"
+        ElseIf missing > 0 Then
+            grpTilesets.Text = $"Tilesets ({count}, {missing} not found)"
+        Else
+            grpTilesets.Text = $"Tilesets ({count})"
+        End If
     End Sub
 
 #End Region

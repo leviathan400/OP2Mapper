@@ -20,8 +20,9 @@ Public Class fMiniMap
     ' Where the thumbnail is drawn inside the client area (lets us letterbox
     ' for non-square maps without distorting the image).
     Private _thumbBounds As Rectangle = Rectangle.Empty
-    ' Visible tile rect in fMain's panel — drawn as a yellow overlay.
-    Private _viewportTileRect As Rectangle = Rectangle.Empty
+    ' Visible tile rect in fMain's panel — drawn as a yellow overlay. Kept in
+    ' fractional tiles so the box matches the main view exactly.
+    Private _viewportTileRect As RectangleF = RectangleF.Empty
     ' Cached map dimensions so click→tile conversion doesn't need the Map.
     Private _mapWidthInTiles As Integer = 0
     Private _mapHeightInTiles As Integer = 0
@@ -102,10 +103,10 @@ Public Class fMiniMap
     End Sub
 
     ''' <summary>
-    ''' Updates the viewport rectangle overlay (in map-tile coordinates).
-    ''' Cheap — no re-render, just stores and invalidates.
+    ''' Updates the viewport rectangle overlay (in map-tile coordinates, which
+    ''' may be fractional). Cheap — no re-render, just stores and invalidates.
     ''' </summary>
-    Public Sub UpdateViewport(visibleTileRect As Rectangle)
+    Public Sub UpdateViewport(visibleTileRect As RectangleF)
         If _viewportTileRect = visibleTileRect Then Return
         _viewportTileRect = visibleTileRect
         Invalidate()
@@ -119,7 +120,7 @@ Public Class fMiniMap
             _thumbnail.Dispose()
             _thumbnail = Nothing
         End If
-        _viewportTileRect = Rectangle.Empty
+        _viewportTileRect = RectangleF.Empty
         _thumbBounds = Rectangle.Empty
         _mapWidthInTiles = 0
         _mapHeightInTiles = 0
@@ -150,17 +151,35 @@ Public Class fMiniMap
         If _viewportTileRect.Width > 0 AndAlso _viewportTileRect.Height > 0 AndAlso
            _mapWidthInTiles > 0 AndAlso _mapHeightInTiles > 0 Then
 
-            Dim sx As Single = _thumbBounds.Width / CSng(_mapWidthInTiles)
-            Dim sy As Single = _thumbBounds.Height / CSng(_mapHeightInTiles)
+            ' Clip to the map so the box doesn't spill into the letterbox
+            ' when the main view shows the black margin past the map edge.
+            Dim visible As RectangleF = RectangleF.Intersect(_viewportTileRect,
+                New RectangleF(0, 0, _mapWidthInTiles, _mapHeightInTiles))
 
-            Dim rx As Integer = _thumbBounds.X + CInt(_viewportTileRect.X * sx)
-            Dim ry As Integer = _thumbBounds.Y + CInt(_viewportTileRect.Y * sy)
-            Dim rw As Integer = Math.Max(1, CInt(_viewportTileRect.Width * sx))
-            Dim rh As Integer = Math.Max(1, CInt(_viewportTileRect.Height * sy))
+            If visible.Width > 0 AndAlso visible.Height > 0 Then
+                ' Tiles → thumbnail pixels, kept fractional and rounded only
+                ' once at the end (rounding each value separately made the box
+                ' drift by up to a pixel or two).
+                Dim sx As Single = _thumbBounds.Width / CSng(_mapWidthInTiles)
+                Dim sy As Single = _thumbBounds.Height / CSng(_mapHeightInTiles)
+                Dim left As Single = _thumbBounds.X + visible.Left * sx
+                Dim top As Single = _thumbBounds.Y + visible.Top * sy
+                Dim right As Single = _thumbBounds.X + visible.Right * sx
+                Dim bottom As Single = _thumbBounds.Y + visible.Bottom * sy
 
-            Using pen As New Pen(System.Drawing.Color.Yellow, 2)
-                g.DrawRectangle(pen, rx, ry, rw, rh)
-            End Using
+                Dim rx As Integer = CInt(Math.Floor(left))
+                Dim ry As Integer = CInt(Math.Floor(top))
+                Dim rw As Integer = Math.Max(1, CInt(Math.Ceiling(right)) - rx)
+                Dim rh As Integer = Math.Max(1, CInt(Math.Ceiling(bottom)) - ry)
+
+                ' Drawn with pixel offset off so the pen lines up with the
+                ' computed pixels (Half, set above for the thumbnail, would
+                ' shift it half a pixel).
+                g.PixelOffsetMode = Drawing2D.PixelOffsetMode.Default
+                Using pen As New Pen(System.Drawing.Color.Yellow, 2)
+                    g.DrawRectangle(pen, rx, ry, rw, rh)
+                End Using
+            End If
         End If
     End Sub
 
@@ -200,8 +219,10 @@ Public Class fMiniMap
         ' drag that exits the thumbnail still produces a valid tile).
         Dim relX As Single = (e.X - _thumbBounds.X) / CSng(_thumbBounds.Width)
         Dim relY As Single = (e.Y - _thumbBounds.Y) / CSng(_thumbBounds.Height)
-        Dim tx As Integer = CInt(relX * _mapWidthInTiles)
-        Dim ty As Integer = CInt(relY * _mapHeightInTiles)
+        ' Floor, not CInt: CInt rounds, so a click in the right or bottom half
+        ' of a tile used to jump to the next tile over.
+        Dim tx As Integer = CInt(Math.Floor(relX * _mapWidthInTiles))
+        Dim ty As Integer = CInt(Math.Floor(relY * _mapHeightInTiles))
         tx = Math.Max(0, Math.Min(_mapWidthInTiles - 1, tx))
         ty = Math.Max(0, Math.Min(_mapHeightInTiles - 1, ty))
 
@@ -260,6 +281,10 @@ Public Class fMiniMap
         MyBase.WndProc(m)
     End Sub
 
+    ''' <summary>
+    ''' Win32 RECT (screen coordinates) as passed in the WM_MOVING lParam;
+    ''' read, adjusted for snapping, then written back.
+    ''' </summary>
     <Runtime.InteropServices.StructLayout(Runtime.InteropServices.LayoutKind.Sequential)>
     Private Structure RECT
         Public Left As Integer

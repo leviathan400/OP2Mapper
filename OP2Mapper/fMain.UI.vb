@@ -62,14 +62,21 @@ Partial Public Class fMain
     ''' the given tile, falling back to a placeholder if the tile image is unavailable.
     ''' </summary>
     Private Sub UpdateTilePreview(tileData As TileData)
-        ' Clear any previous images
-        If selectedTileImage IsNot Nothing Then
-            picTilePreview.Image = Nothing
-            selectedTileImage.Dispose()
-            selectedTileImage = Nothing
-        End If
-
+        ' Clear any previous images. Detach BOTH picture boxes before disposing:
+        ' picTilePreviewBig displays selectedTileImage, and disposing it while
+        ' still attached made the box's next paint fail if no new image was
+        ' assigned. The small preview's bitmap used to be dropped without
+        ' being disposed at all.
+        Dim oldSmall As System.Drawing.Image = picTilePreview.Image
+        Dim oldBig As System.Drawing.Image = picTilePreviewBig.Image
         picTilePreview.Image = Nothing
+        picTilePreviewBig.Image = Nothing
+        If oldSmall IsNot Nothing Then oldSmall.Dispose()
+        If oldBig IsNot Nothing AndAlso oldBig IsNot oldSmall Then oldBig.Dispose()
+        If selectedTileImage IsNot Nothing AndAlso selectedTileImage IsNot oldBig Then
+            selectedTileImage.Dispose()
+        End If
+        selectedTileImage = Nothing
 
         If mapRenderer IsNot Nothing Then
             ' Get the raw tile image directly, bypassing render mode effects

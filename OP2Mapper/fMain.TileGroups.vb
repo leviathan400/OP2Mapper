@@ -52,7 +52,9 @@ Partial Public Class fMain
             Using groupIndicator As New Bitmap(32, 32)
                 Using g As Graphics = Graphics.FromImage(groupIndicator)
                     g.Clear(System.Drawing.Color.Lavender)
-                    g.DrawRectangle(New Pen(System.Drawing.Color.DarkMagenta, 2), 2, 2, 28, 28)
+                    Using indicatorPen As New Pen(System.Drawing.Color.DarkMagenta, 2)
+                        g.DrawRectangle(indicatorPen, 2, 2, 28, 28)
+                    End Using
 
                     Using font As New Font("Arial", 7, FontStyle.Bold)
                         Dim text As String = $"{GlobalVariables.TileGroupWidth}x{GlobalVariables.TileGroupHeight}"
@@ -156,7 +158,9 @@ Partial Public Class fMain
                 Next
 
                 ' Add border
-                g.DrawRectangle(New Pen(System.Drawing.Color.Magenta, 2), 0, 0, width - 1, height - 1)
+                Using borderPen As New Pen(System.Drawing.Color.Magenta, 2)
+                    g.DrawRectangle(borderPen, 0, 0, width - 1, height - 1)
+                End Using
             End Using
 
         Catch ex As Exception
@@ -208,6 +212,28 @@ Partial Public Class fMain
            startY + GlobalVariables.TileGroupHeight > currentMap.HeightInTiles() Then
             MessageBox.Show("Cannot place tile group at this location. It would extend beyond the map boundary.",
                            "Placement Error", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            Return
+        End If
+
+        ' Tile groups store raw mapping indices and their JSON is hand-editable,
+        ' or may come from a map with a different mapping table. Refuse to
+        ' write indices this map doesn't have — they'd break rendering and the
+        ' saved file.
+        Dim mappingCount As Integer = currentMap.tileMappings.Count
+        Dim invalidCount As Integer = 0
+        Dim firstInvalid As Integer = 0
+        For Each idx As Integer In GlobalVariables.TileGroupTileMappings
+            If idx < 0 OrElse idx >= mappingCount Then
+                If invalidCount = 0 Then firstInvalid = idx
+                invalidCount += 1
+            End If
+        Next
+        If invalidCount > 0 Then
+            MessageBox.Show(
+                $"This tile group can't be placed on this map: {invalidCount} of its tiles use mapping indices " &
+                $"this map doesn't have (e.g. {firstInvalid}; this map has {mappingCount} mappings, 0-{mappingCount - 1})." &
+                vbCrLf & vbCrLf & "The group was probably made for a map with a different tileset setup.",
+                "Incompatible Tile Group", MessageBoxButtons.OK, MessageBoxIcon.Warning)
             Return
         End If
 
