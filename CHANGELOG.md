@@ -5,7 +5,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-Current release: 0.6.5 (build 0148).
+Current release: 0.7.0 (build 0150).
 
 ### Added
 - **Terrain brush (new Terrain Brush tool window).** Pick a ground (Mud, Rock, Sand or Vegetation) and left-drag on the map. The edges where it meets other ground are filled in with the game's own transition tiles, so mud, rock and sand blend smoothly.
@@ -66,6 +66,7 @@ Current release: 0.6.5 (build 0148).
 
 #### Tool windows
 - **Tool windows remember their positions between runs, on any monitor.** Only Tile Set's position was ever saved. The other four were closed at exit without saving, so they came back piled up at the top-left. Positions are now saved when a window is moved and again when the app closes. Any window without a usable saved position, such as one last on a monitor that's no longer connected, gets the default layout. The others stay where they were. The main window also saves its position when moved, resized, maximized or restored, not only on exit.
+- **Tool windows no longer pile up on a new install.** On screens narrower than 1,700 px they used to be stacked at the top-left corner. Now they're laid out in columns from the right edge without overlapping, and overlap as little as possible on very small screens. They open on the main window's screen, or another monitor if there is one.
 
 #### Editing
 - **Painting no longer stays stuck on after the bottom-row warning.** The drag also ends when the mouse moves with no button held.

@@ -781,31 +781,35 @@ Module ToolPaletteHelper
     ''' Returns the open form instance of the given type, or Nothing if not open
     ''' </summary>
     Private Function FindOpenToolForm(formType As Type) As Form
-        For Each f As Form In Application.OpenForms
-            If formType.IsInstanceOfType(f) Then Return f
+        ' Uses the registered palettes, not Application.OpenForms: setting
+        ' ShowInTaskbar in ConfigureAsToolPalette recreates the window handle,
+        ' and WinForms then drops the form from Application.OpenForms, so the
+        ' palettes were never found and the first-run layout did nothing.
+        For Each f As Form In GetToolForms()
+            If f IsNot Nothing AndAlso Not f.IsDisposed AndAlso formType.IsInstanceOfType(f) Then Return f
         Next
         Return Nothing
     End Function
 
     ''' <summary>
-    ''' Picks a default placement for the five tool palettes based on screen
-    ''' count and primary screen width. Called once on first run; positions
-    ''' are then saved to the INI so subsequent runs restore them per-form.
+    ''' Picks a default placement for the tool palettes. Called when edit mode
+    ''' opens them; positions are then saved to the INI so later runs restore
+    ''' them per form.
     '''
-    ''' Layout for a wide single screen:
+    ''' Screen (PickToolScreen): the main window's screen with one monitor;
+    ''' with several, another monitor, so the main window's screen stays clear.
+    '''
+    ''' Wide screen (1700 px or more): the fixed layout the user confirmed:
     '''   Top row (left → right): TileSelect | TileSet | CellTypes
     '''   Second row:             MiniMap    |   TileGroups (spans TS+CT)
+    ''' Palettes it doesn't cover (Terrain) are packed into free space.
     '''
-    ''' Layout for multi-monitor: all five tools on the secondary screen
-    ''' using the same arrangement (primary stays free for fMain).
-    '''
-    ''' Layout for a narrow single screen: cascade from top-left so every
-    ''' window is at least visible.
+    ''' Smaller screen: every palette is packed along the right edge in
+    ''' columns without overlapping (FindFreeSpot). If they can't all fit, the
+    ''' rest go where they overlap the others least.
     '''
     ''' With onlyUnplaced = True, palettes that already have a usable saved
-    ''' position keep it; only the rest are moved to the default layout. The
-    ''' layout still uses every open palette's size, so the gaps it leaves
-    ''' for restored palettes are the same as on a first run.
+    ''' position keep it, and the others are placed around them.
     ''' </summary>
     Public Sub ArrangeToolWindowsSmart(Optional onlyUnplaced As Boolean = False)
         ' Remember where the already-placed palettes are, so they can be put
@@ -829,38 +833,46 @@ Module ToolPaletteHelper
         Dim miniMap = FindOpenToolForm(GetType(fMiniMap))
         Dim terrain = FindOpenToolForm(GetType(fTerrain))
 
-        ' Pick the screen to lay out on. If the user has a second monitor,
-        ' use it (keeps the primary clear for fMain). Otherwise primary.
-        Dim targetScreen As Screen = If(Screen.AllScreens.Length > 1,
-                                         Screen.AllScreens(1),
-                                         Screen.PrimaryScreen)
-        Dim workArea As Rectangle = targetScreen.WorkingArea
+        Dim workArea As Rectangle = PickToolScreen().WorkingArea
+        Debug.WriteLine($"ArrangeToolWindowsSmart: onlyUnplaced={onlyUnplaced}, kept={keepLocations.Count}, workArea={workArea}")
 
         ' Wide enough to do the proper right-side layout. Threshold chosen so
         ' TileSelect (479) + TileSet (248) + CellTypes (217) = 944 px of tools
         ' fits on the right while still leaving ~700+ px for fMain on the left.
         Dim wideEnough As Boolean = workArea.Width >= 1700
-
         If wideEnough Then
             LayoutWideScreen(workArea, tileSet, cellTypes, tileSelect, tileGroups, miniMap)
-            ' Terrain goes under the Mini Map (or under TileSelect), kept on screen.
-            If terrain IsNot Nothing Then
-                Dim above As Form = If(miniMap, tileSelect)
-                Dim tx As Integer = If(above IsNot Nothing, above.Left, workArea.Right - terrain.Width - 500)
-                Dim ty As Integer = If(above IsNot Nothing, above.Bottom, workArea.Top + 245)
-                tx = Math.Max(workArea.Left, Math.Min(tx, workArea.Right - terrain.Width))
-                ty = Math.Max(workArea.Top, Math.Min(ty, workArea.Bottom - terrain.Height))
-                terrain.Location = New Point(tx, ty)
-            End If
-        Else
-            LayoutCascade(workArea, tileSet, cellTypes, tileSelect, tileGroups, miniMap, terrain)
         End If
 
-        ' Put the restored palettes back, then persist the newly chosen
-        ' positions so this only happens once per palette.
+        ' Put the restored palettes back where the user left them.
         For Each kvp In keepLocations
             kvp.Key.Location = kvp.Value
         Next
+
+        ' Pack the rest along the right edge without overlapping: everything on
+        ' a smaller screen, and on a wide screen any palette the fixed layout
+        ' doesn't cover (Terrain) or that ended up overlapping or off screen.
+        ' Order: tall palettes first, so they form the right-hand columns.
+        Dim placed As New List(Of Rectangle)
+        For Each kvp In keepLocations
+            placed.Add(kvp.Key.Bounds)
+        Next
+        Dim fixedLayout As Form() = If(wideEnough, {cellTypes, tileSet, tileSelect, miniMap, tileGroups}, New Form() {})
+        For Each f As Form In fixedLayout
+            If f Is Nothing OrElse keepLocations.ContainsKey(f) Then Continue For
+            If workArea.Contains(f.Bounds) AndAlso Not placed.Any(Function(r) r.IntersectsWith(f.Bounds)) Then
+                placed.Add(f.Bounds)
+            End If
+        Next
+        For Each f As Form In {cellTypes, tileSet, terrain, tileSelect, miniMap, tileGroups}
+            If f Is Nothing OrElse keepLocations.ContainsKey(f) Then Continue For
+            If placed.Contains(f.Bounds) Then Continue For      ' kept from the wide layout
+            f.Location = FindFreeSpot(workArea, f.Size, placed)
+            placed.Add(f.Bounds)
+            Debug.WriteLine($"  placed {f.Name} at {f.Bounds}")
+        Next
+
+        ' Persist the newly chosen positions so this only happens once per palette.
         For Each f As Form In {tileSet, cellTypes, tileSelect, tileGroups, miniMap, terrain}
             If f Is Nothing OrElse keepLocations.ContainsKey(f) Then Continue For
             SavePosition(f, GetToolPositionKey(f))
@@ -915,25 +927,65 @@ Module ToolPaletteHelper
     End Sub
 
     ''' <summary>
-    ''' Fallback for narrow screens — cascade from top-left so at least
-    ''' every window is visible and the user can rearrange manually.
+    ''' The screen for the default palette layout: the main window's screen
+    ''' when there is one monitor. With several, another monitor (the largest),
+    ''' so the main window's screen stays clear for the map.
     ''' </summary>
-    Private Sub LayoutCascade(workArea As Rectangle,
-                              tileSet As Form, cellTypes As Form,
-                              tileSelect As Form, tileGroups As Form,
-                              miniMap As Form, terrain As Form)
-        Const cascadeStep As Integer = 32
-        Dim x As Integer = workArea.Left + 16
-        Dim y As Integer = workArea.Top + 16
-
-        For Each f As Form In {tileSet, cellTypes, tileSelect, tileGroups, miniMap, terrain}
-            If f IsNot Nothing Then
-                f.Location = New Point(x, y)
-                x += cascadeStep
-                y += cascadeStep
+    Private Function PickToolScreen() As Screen
+        Dim main As Form = Application.OpenForms("fMain")
+        Dim mainScreen As Screen = If(main IsNot Nothing, Screen.FromControl(main), Screen.PrimaryScreen)
+        Dim best As Screen = Nothing
+        For Each s As Screen In Screen.AllScreens
+            If s.DeviceName = mainScreen.DeviceName Then Continue For
+            If best Is Nothing OrElse
+               s.WorkingArea.Width * s.WorkingArea.Height > best.WorkingArea.Width * best.WorkingArea.Height Then
+                best = s
             End If
         Next
-    End Sub
+        Return If(best, mainScreen)
+    End Function
+
+    ''' <summary>
+    ''' Finds a spot for a palette of this size inside the work area: one that
+    ''' overlaps the already placed palettes as little as possible (ideally not
+    ''' at all), as far right as possible, then as high as possible. So the
+    ''' palettes fill columns from the right edge, leaving the left side free.
+    ''' Candidate spots are the work area's edges and the edges of the placed
+    ''' palettes.
+    ''' </summary>
+    Private Function FindFreeSpot(workArea As Rectangle, size As Size, placed As List(Of Rectangle)) As Point
+        Dim xs As New HashSet(Of Integer) From {workArea.Right - size.Width}
+        Dim ys As New HashSet(Of Integer) From {workArea.Top}
+        For Each r In placed
+            xs.Add(r.Left - size.Width)
+            xs.Add(r.Right - size.Width)
+            ys.Add(r.Bottom)
+            ys.Add(r.Top)
+        Next
+
+        Dim bestPoint As New Point(workArea.Right - size.Width, workArea.Top)
+        Dim bestOverlap As Long = Long.MaxValue
+        For Each x0 In xs
+            Dim x As Integer = Math.Max(workArea.Left, Math.Min(x0, workArea.Right - size.Width))
+            For Each y0 In ys
+                Dim y As Integer = Math.Max(workArea.Top, Math.Min(y0, workArea.Bottom - size.Height))
+                Dim candidate As New Rectangle(x, y, size.Width, size.Height)
+                Dim overlap As Long = 0
+                For Each r In placed
+                    Dim i As Rectangle = Rectangle.Intersect(r, candidate)
+                    If Not i.IsEmpty Then overlap += CLng(i.Width) * i.Height
+                Next
+                Dim better As Boolean =
+                    overlap < bestOverlap OrElse
+                    (overlap = bestOverlap AndAlso (x > bestPoint.X OrElse (x = bestPoint.X AndAlso y < bestPoint.Y)))
+                If better Then
+                    bestOverlap = overlap
+                    bestPoint = New Point(x, y)
+                End If
+            Next
+        Next
+        Return bestPoint
+    End Function
 
     ''' <summary>
     ''' Legacy entry point — kept for compatibility but now just calls the

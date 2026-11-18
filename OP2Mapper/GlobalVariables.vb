@@ -21,9 +21,9 @@ Module GlobalVariables
     ' Application info
 
     ''' <summary>Build number string shown in the About/title info.</summary>
-    Public Const ApplicationBuild As String = "0148"
+    Public Const ApplicationBuild As String = "0150"
     ''' <summary>Application version string shown in the About/title info.</summary>
-    Public Const ApplicationVersion As String = "0.6.5"
+    Public Const ApplicationVersion As String = "0.7.0"
     ''' <summary>Application name used in titles and messages.</summary>
     Public Const ApplicationName As String = "OP2Mapper"      ' OP2Mapper / OP2Mapper3
     ''' <summary>One-line application description.</summary>
