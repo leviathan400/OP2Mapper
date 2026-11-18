@@ -103,10 +103,17 @@ Partial Public Class fMain
     ''' <summary>
     ''' Starts collecting edits into a single undo step (call on drag start).
     ''' </summary>
-    Private Sub BeginEditStroke()
+    Private Sub BeginEditStroke(Optional description As String = Nothing)
         EndEditStroke()
         currentStroke = New List(Of Command)()
+        currentStrokeDescription = description
     End Sub
+
+    ''' <summary>
+    ''' Undo-menu text for the open stroke when it holds more than one command
+    ''' (e.g. "Terrain Brush: Sand"). Nothing = the generic "Paint (N tiles)".
+    ''' </summary>
+    Private currentStrokeDescription As String = Nothing
 
     ''' <summary>
     ''' Commits the open drag stroke (if any) as one undo step.
@@ -120,7 +127,8 @@ Partial Public Class fMain
         If stroke.Count = 1 Then
             PushUndo(stroke(0))
         Else
-            PushUndo(New CompositeCommand(stroke, $"Paint ({stroke.Count} tiles)"))
+            PushUndo(New CompositeCommand(stroke,
+                     If(currentStrokeDescription, $"Paint ({stroke.Count} tiles)")))
         End If
     End Sub
 
@@ -132,6 +140,7 @@ Partial Public Class fMain
         lastEditTileX = -1
         lastEditTileY = -1
         EndEditStroke()
+        EndTerrainStroke()
     End Sub
 
     ''' <summary>
@@ -377,6 +386,9 @@ Partial Public Class fMain
         '== MAP-DEPENDENT SHORTCUTS                       ==
         '===================================================
         If currentMap IsNot Nothing Then
+
+            ' Draw Cliff: Enter places, Backspace removes a point, Esc clears.
+            If HandleCliffKey(keyData) Then Return True
 
             '===================================================
             '== TILE GROUP OPERATION                          ==

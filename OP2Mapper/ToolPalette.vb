@@ -24,6 +24,7 @@ Module ToolPaletteHelper
     Private Const KeyTileSelect As String = "TileSelect"
     Private Const KeyTileGroups As String = "TileGroups"
     Private Const KeyMiniMap As String = "MiniMap"
+    Private Const KeyTerrain As String = "Terrain"
 
     ' Recent-files list (most-recent-first). Stored as RecentFile1..N in the
     ' INI's [Window] section — reusing the existing section to avoid extra
@@ -39,7 +40,7 @@ Module ToolPaletteHelper
     ' to ToolWindowsAlwaysOnTop when absent.
     Private Const KeyToolWindowTopMostPrefix As String = "AlwaysOnTop_"
     Private ReadOnly ToolFormTypeNames As String() =
-        {"fTileSet", "fCellTypes", "fTileSelect", "fTileGroups", "fMiniMap"}
+        {"fTileSet", "fCellTypes", "fTileSelect", "fTileGroups", "fMiniMap", "fTerrain"}
 
     ' Title-bar menu hooks, kept here so they aren't garbage collected.
     Private ReadOnly SystemMenus As New Dictionary(Of Form, ToolPaletteSystemMenu)
@@ -81,7 +82,12 @@ Module ToolPaletteHelper
     Public Sub ConfigureAsToolPalette(form As Form)
         Debug.WriteLine("ConfigureAsToolPalette: " & form.Name.ToString)
 
+        ' Fixed size, and no close/min/max buttons: palettes open and close
+        ' with edit mode. The title-bar menu (right-click) still works.
         form.FormBorderStyle = FormBorderStyle.FixedToolWindow
+        form.ControlBox = False
+        form.MaximizeBox = False
+        form.MinimizeBox = False
         ' TopMost is user-controllable per window (title-bar menu) or for all
         ' palettes (title-bar menu / View → Tool Windows Always On Top).
         ' Stored in Mapper3.ini; defaults to True so first-run matches the
@@ -120,6 +126,7 @@ Module ToolPaletteHelper
         If TypeOf form Is fTileSelect Then Return KeyTileSelect
         If TypeOf form Is fTileGroups Then Return KeyTileGroups
         If TypeOf form Is fMiniMap Then Return KeyMiniMap
+        If TypeOf form Is fTerrain Then Return KeyTerrain
         Return Nothing
     End Function
 
@@ -820,6 +827,7 @@ Module ToolPaletteHelper
         Dim tileSelect = FindOpenToolForm(GetType(fTileSelect))
         Dim tileGroups = FindOpenToolForm(GetType(fTileGroups))
         Dim miniMap = FindOpenToolForm(GetType(fMiniMap))
+        Dim terrain = FindOpenToolForm(GetType(fTerrain))
 
         ' Pick the screen to lay out on. If the user has a second monitor,
         ' use it (keeps the primary clear for fMain). Otherwise primary.
@@ -835,8 +843,17 @@ Module ToolPaletteHelper
 
         If wideEnough Then
             LayoutWideScreen(workArea, tileSet, cellTypes, tileSelect, tileGroups, miniMap)
+            ' Terrain goes under the Mini Map (or under TileSelect), kept on screen.
+            If terrain IsNot Nothing Then
+                Dim above As Form = If(miniMap, tileSelect)
+                Dim tx As Integer = If(above IsNot Nothing, above.Left, workArea.Right - terrain.Width - 500)
+                Dim ty As Integer = If(above IsNot Nothing, above.Bottom, workArea.Top + 245)
+                tx = Math.Max(workArea.Left, Math.Min(tx, workArea.Right - terrain.Width))
+                ty = Math.Max(workArea.Top, Math.Min(ty, workArea.Bottom - terrain.Height))
+                terrain.Location = New Point(tx, ty)
+            End If
         Else
-            LayoutCascade(workArea, tileSet, cellTypes, tileSelect, tileGroups, miniMap)
+            LayoutCascade(workArea, tileSet, cellTypes, tileSelect, tileGroups, miniMap, terrain)
         End If
 
         ' Put the restored palettes back, then persist the newly chosen
@@ -844,7 +861,7 @@ Module ToolPaletteHelper
         For Each kvp In keepLocations
             kvp.Key.Location = kvp.Value
         Next
-        For Each f As Form In {tileSet, cellTypes, tileSelect, tileGroups, miniMap}
+        For Each f As Form In {tileSet, cellTypes, tileSelect, tileGroups, miniMap, terrain}
             If f Is Nothing OrElse keepLocations.ContainsKey(f) Then Continue For
             SavePosition(f, GetToolPositionKey(f))
         Next
@@ -904,12 +921,12 @@ Module ToolPaletteHelper
     Private Sub LayoutCascade(workArea As Rectangle,
                               tileSet As Form, cellTypes As Form,
                               tileSelect As Form, tileGroups As Form,
-                              miniMap As Form)
+                              miniMap As Form, terrain As Form)
         Const cascadeStep As Integer = 32
         Dim x As Integer = workArea.Left + 16
         Dim y As Integer = workArea.Top + 16
 
-        For Each f As Form In {tileSet, cellTypes, tileSelect, tileGroups, miniMap}
+        For Each f As Form In {tileSet, cellTypes, tileSelect, tileGroups, miniMap, terrain}
             If f IsNot Nothing Then
                 f.Location = New Point(x, y)
                 x += cascadeStep

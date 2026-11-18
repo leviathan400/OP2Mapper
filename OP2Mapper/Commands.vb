@@ -290,6 +290,72 @@ Public Class CompositeCommand
 End Class
 
 ''' <summary>
+''' One tile change made by the terrain brush: tile mapping and cell type,
+''' before and after.
+''' </summary>
+Public Structure TerrainTileChange
+    Public X As Integer
+    Public Y As Integer
+    Public OldMapping As Integer
+    Public NewMapping As Integer
+    Public OldCellType As CellType
+    Public NewCellType As CellType
+End Structure
+
+''' <summary>
+''' Applies a batch of terrain-brush tile changes (mapping and cell type
+''' together). One of these is made per brush dab; a drag stroke groups them
+''' into one undo step.
+''' </summary>
+Public Class TerrainBrushCommand
+    Inherits Command
+
+    Private ReadOnly map As Map
+    Private ReadOnly changes As List(Of TerrainTileChange)
+    Private ReadOnly _description As String
+
+    Public Sub New(map As Map, changes As List(Of TerrainTileChange), description As String)
+        Me.map = map
+        Me.changes = changes
+        Me._description = description
+    End Sub
+
+    ''' <summary>The changes, for repainting the affected tiles.</summary>
+    Public ReadOnly Property TileChanges As IReadOnlyList(Of TerrainTileChange)
+        Get
+            Return changes
+        End Get
+    End Property
+
+    ''' <summary>
+    ''' Execute: writes every new mapping and cell type.
+    ''' </summary>
+    Public Overrides Sub Execute()
+        For Each c In changes
+            map.SetTileMappingIndex(c.X, c.Y, c.NewMapping)
+            map.SetCellType(c.NewCellType, c.X, c.Y)
+        Next
+    End Sub
+
+    ''' <summary>
+    ''' Undo: restores every old mapping and cell type, last first.
+    ''' </summary>
+    Public Overrides Sub Undo()
+        For i As Integer = changes.Count - 1 To 0 Step -1
+            Dim c = changes(i)
+            map.SetTileMappingIndex(c.X, c.Y, c.OldMapping)
+            map.SetCellType(c.OldCellType, c.X, c.Y)
+        Next
+    End Sub
+
+    Public Overrides ReadOnly Property Description As String
+        Get
+            Return _description
+        End Get
+    End Property
+End Class
+
+''' <summary>
 ''' One cell-type change in a bulk operation.
 ''' </summary>
 Public Structure CellTypeChange

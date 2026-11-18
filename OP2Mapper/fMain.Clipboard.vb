@@ -233,6 +233,7 @@ Partial Public Class fMain
     Private Sub InitializeCopyMode()
         ' Erase any rectangle left from the previous copy before resetting.
         ClearCopySelectionDisplay()
+        StopTerrainTool()
 
         ' Reset copy mode state
         GlobalVariables.IsCopyMode = True
@@ -270,6 +271,7 @@ Partial Public Class fMain
     ''' </summary>
     Private Sub InitializePasteMode()
         Debug.WriteLine("Initializing paste mode")
+        StopTerrainTool()
 
         ' If a confirmation timer is active, stop it
         If copyConfirmationTimer.Enabled Then
@@ -786,6 +788,10 @@ Partial Public Class fMain
         End If
 
         statusStrip.Items(0).Text = currentMapFile ' What should default text be? Need to decide
+
+        ' Stop the terrain brush too
+        StopTerrainTool()
+        pnlMap.Cursor = Cursors.Default
 
         ' Reset tool selection to default state
         GlobalVariables.ActiveCellType = CellType.FastPassible1

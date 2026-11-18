@@ -14,7 +14,7 @@ op2mapper/
 ├── CHANGELOG.md                   # Notable changes per release
 ├── ARCHITECTURE.md                # This document
 └── OP2Mapper/                     # The application (VB.NET, WinForms, .NET Framework 4.8)
-    ├── OP2Mapper.vbproj           # Project file; references DLLs in ..\..\other\
+    ├── OP2Mapper.vbproj           # Project file; references DLLs in ..\..\other\ (incl. op2maplib)
     ├── App.config, packages.config# Runtime config; NuGet: Newtonsoft.Json 13.0.4
     ├── ApplicationEvents.vb       # My.Application startup/shutdown hooks
     ├── My Project/                # Assembly info, resources, user settings, manifest
@@ -32,7 +32,8 @@ op2mapper/
     ├── fMain.Clipboard.vb         # Copy region / paste mode and previews
     ├── fMain.TileGroups.vb        # Tile-group placement mode
     ├── fMain.Export.vb            # JPEG export and multi-mode overview image
-    ├── fMain.MapAnalysis.vb       # Enclosed-area detection and fix
+    ├── fMain.MapAnalysis.vb       # Enclosed-area detection and fix (analysis by op2maplib)
+    ├── fMain.Terrain.vb           # Terrain brush and Draw Cliff (op2maplib)
     ├── fMain.Menus.vb             # Menu item handlers
     ├── fMain.UI.vb                # Labels, tile preview, resize handling
     ├── fMain.Helpers.vb           # Small shared helpers (render-mode sync, lookups)
@@ -54,6 +55,7 @@ op2mapper/
     ├── fTileSelect.vb             # Copied-region viewer and tile-group export (tool 3)
     ├── fTileGroups.vb             # Tile-group library browser (tool 4)
     ├── fMiniMap.vb                # Mini-map with click-to-jump (tool 5)
+    ├── fTerrain.vb                # Terrain Brush window: grounds, brush size, Draw Cliff (tool 6)
     ├── fNewMap.vb                 # New Map dialog (size, biome, name)
     ├── fSettings.vb               # Paths: OP2 folder, working folder, tile groups
     ├── fSplashScreen.vb           # Splash and startup update check
@@ -178,9 +180,9 @@ Deployment: In-process.
 
 Name: Enclosed-area finder
 
-Description: `fMain.MapAnalysis.vb` flood-fills passable regions and finds areas that are cut off from the main (largest) region. It can highlight those areas, or convert them to impassable in one bulk, undoable command.
+Description: `fMain.MapAnalysis.vb` finds areas that are cut off from the main (largest) passable region. The region analysis is done by op2maplib (`MapRegions`); the file keeps the UI. It can highlight those areas, or convert them to impassable in one bulk, undoable command.
 
-Technologies: VB.NET.
+Technologies: VB.NET, op2maplib.
 
 Deployment: In-process.
 
@@ -323,7 +325,7 @@ Key Security Tools/Practices:
 Local Setup Instructions:
 
 1. Install Visual Studio 2022 (or the 2022 Build Tools) with the .NET desktop workload.
-2. Check out `^/op2mapper` so that the sibling folder `..\..\other\` exists. It contains `OP2UtilityDotNet.dll` and `OP2MapJsonTools.dll`.
+2. Make sure the sibling folder `..\..\other\` exists. It contains `OP2UtilityDotNet.dll`, `OP2MapJsonTools.dll` and `Op2MapLib.Net.dll`, with op2maplib's native DLLs and profile in `other\op2maplib\`.
 3. Restore NuGet packages (Newtonsoft.Json 13.0.4 into `..\packages`).
 4. Build `OP2Mapper.sln`.
 5. On first run, set the Outpost 2 folder in File → Settings. Tilesets are loaded from it.
@@ -363,7 +365,7 @@ See [ROADMAP.md](ROADMAP.md) for the full plan. Architecturally significant item
 
 ## 10. Project Identification
 
-Project Name: OP2Mapper3 (assembly `OP2Mapper`, version 0.6.0, build 0144)
+Project Name: OP2Mapper3 (assembly `OP2Mapper`, version 0.6.1, build 0147)
 
 Repository URL: https://github.com/leviathan400/OP2Mapper
 

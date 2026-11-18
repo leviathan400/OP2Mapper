@@ -21,9 +21,9 @@ Module GlobalVariables
     ' Application info
 
     ''' <summary>Build number string shown in the About/title info.</summary>
-    Public Const ApplicationBuild As String = "0144"
+    Public Const ApplicationBuild As String = "0147"
     ''' <summary>Application version string shown in the About/title info.</summary>
-    Public Const ApplicationVersion As String = "0.6.0"
+    Public Const ApplicationVersion As String = "0.6.1"
     ''' <summary>Application name used in titles and messages.</summary>
     Public Const ApplicationName As String = "OP2Mapper"      ' OP2Mapper / OP2Mapper3
     ''' <summary>One-line application description.</summary>
@@ -69,6 +69,28 @@ Module GlobalVariables
     ''' "no cell-type tool selected".
     ''' </summary>
     Public CellTypeToolActive As Boolean = False
+
+    ' Terrain brush (op2maplib) state - set by fTerrain, read by fMain.Terrain.
+    ''' <summary>
+    ''' True when the user picked a ground in the Terrain palette. The brush is
+    ''' only in use while no tile or cell type is selected either (picking one
+    ''' of those takes over without clearing this flag); see fMain.IsTerrainToolActive.
+    ''' </summary>
+    Public TerrainToolActive As Boolean = False
+    ''' <summary>Ground index (in the op2maplib profile) the terrain brush paints, or -1.</summary>
+    Public TerrainGround As Integer = -1
+    ''' <summary>Display name of TerrainGround, e.g. "Sand".</summary>
+    Public TerrainGroundName As String = ""
+    ''' <summary>Terrain brush diameter in tiles: odd, 3 to 25. Saved in Mapper3.ini.</summary>
+    Public TerrainBrushSize As Integer = 5
+
+    ' Cliff tool (op2maplib) state - set by fTerrain, read by fMain.Terrain.
+    ''' <summary>True when "Draw Cliff" is on in the Terrain Brush window (see fMain.IsCliffToolActive).</summary>
+    Public CliffToolActive As Boolean = False
+    ''' <summary>High side of new cliffs: 0 = left of the drawing direction, 1 = right, 2 = north, 3 = south.</summary>
+    Public CliffHighSide As Integer = 0
+    ''' <summary>Wall height of new cliffs in tiles, 3 to 6.</summary>
+    Public CliffWallHeight As Integer = 3
 
     ' Copy/Paste state tracking
     ''' <summary>True while a copy-region selection is in progress; written by fMain.Clipboard and fMain.Editing.</summary>

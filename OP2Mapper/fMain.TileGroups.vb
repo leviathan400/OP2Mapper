@@ -25,6 +25,7 @@ Partial Public Class fMain
     ''' </summary>
     Public Sub InitializeTileGroupPlacementMode()
         Debug.WriteLine("Initializing tile group placement mode")
+        StopTerrainTool()
 
         ' Exit any other modes first
         If isPasteMode Then

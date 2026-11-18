@@ -107,8 +107,14 @@ Partial Public Class fMain
                     Dim toolSelected As Boolean = (GlobalVariables.ActiveTileMappingIndex >= 0 AndAlso GlobalVariables.SelectedTileImage IsNot Nothing) OrElse
                               GlobalVariables.CellTypeToolActive
 
-                    ' Only process editing actions if a tool is selected
-                    If toolSelected Then
+                    ' Only process editing actions if a tool is selected.
+                    ' The terrain brush (Terrain palette) comes first: it is only
+                    ' active while no tile or cell type has been picked since.
+                    If IsCliffToolActive() Then
+                        CliffClick(mapCoords.X, mapCoords.Y)
+                    ElseIf IsTerrainToolActive() Then
+                        BeginTerrainStroke(mapCoords.X, mapCoords.Y)
+                    ElseIf toolSelected Then
                         ' Record this as the starting point for dragging edit operations
                         isEditDragging = True
                         ' Everything painted until mouse-up is one undo step.
@@ -287,8 +293,24 @@ Partial Public Class fMain
                 EndEditDrag()
             End If
 
+            ' Draw Cliff: the preview line follows the (snapped) mouse.
+            If IsCliffToolActive() Then UpdateCliffCursor(mapCoords.X, mapCoords.Y)
+
+            ' Terrain brush: move the outline, and paint while dragging. A brush
+            ' always paints along the drag, whatever Single Tile Edit Mode says.
+            If IsTerrainToolActive() Then
+                UpdateTerrainHover(mapCoords.X, mapCoords.Y)
+                If isEditDragging AndAlso terrainBlend IsNot Nothing AndAlso
+                   (mapCoords.X <> lastEditTileX OrElse mapCoords.Y <> lastEditTileY) Then
+                    TerrainDab(mapCoords.X, mapCoords.Y)
+                    lastEditTileX = mapCoords.X
+                    lastEditTileY = mapCoords.Y
+                End If
+            End If
+
             ' Handle edit dragging if enabled and left mouse button is down
-            If isEditDragging AndAlso GlobalVariables.EditModeEnabled AndAlso Not GlobalVariables.SingleTileEditMode Then
+            If isEditDragging AndAlso terrainBlend Is Nothing AndAlso
+               GlobalVariables.EditModeEnabled AndAlso Not GlobalVariables.SingleTileEditMode Then
                 ' Only process if the tile has changed from the last one we edited
                 If mapCoords.X <> lastEditTileX OrElse mapCoords.Y <> lastEditTileY Then
                     ' Remember the old selection box position so we can repaint it.
@@ -506,6 +528,10 @@ Partial Public Class fMain
             If Not copyArea.IsEmpty Then
                 DrawCopySelection(e.Graphics, copyArea)
             End If
+
+            ' Terrain brush outline under the mouse, and the cliff being drawn
+            DrawTerrainOutline(e.Graphics)
+            DrawCliffPreview(e.Graphics)
 
             ' Draw selection rectangle if a tile is selected
             If currentTileX >= 0 AndAlso currentTileY >= 0 AndAlso
@@ -811,6 +837,14 @@ Partial Public Class fMain
     ''' keeping the map point under the cursor stationary while zooming.
     ''' </summary>
     Private Sub MapPanel_MouseWheel(sender As Object, e As MouseEventArgs)
+        ' Ctrl + wheel with the terrain brush armed changes the brush size.
+        If IsTerrainToolActive() AndAlso (Control.ModifierKeys And Keys.Control) = Keys.Control Then
+            If terrainForm IsNot Nothing AndAlso Not terrainForm.IsDisposed Then
+                terrainForm.StepBrushSize(If(e.Delta > 0, 2, -2))
+            End If
+            Return
+        End If
+
         ' Only handle zoom if it's enabled
         If Not GlobalVariables.ZoomEnabled Then
             Return

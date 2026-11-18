@@ -78,6 +78,26 @@
     <Reference Include="System.Data.DataSetExtensions" />
     <Reference Include="System.Net.Http" />
   </ItemGroup>
+  <!-- op2maplib (terrain brush, cliffs, enclosed areas), prebuilt in ..\..\other like the
+       other libraries: the .NET binding, plus the native DLLs and the profile, which are
+       copied to x86\, x64\ and op2maplib\profiles\ in the output folder. -->
+  <ItemGroup>
+    <Reference Include="Op2MapLib.Net">
+      <HintPath>..\..\other\Op2MapLib.Net.dll</HintPath>
+    </Reference>
+    <Content Include="..\..\other\op2maplib\x86\op2maplib.dll">
+      <Link>x86\op2maplib.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\..\other\op2maplib\x64\op2maplib.dll">
+      <Link>x64\op2maplib.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\..\other\op2maplib\profiles\op2.json">
+      <Link>op2maplib\profiles\op2.json</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
   <ItemGroup>
     <Import Include="Microsoft.VisualBasic" />
     <Import Include="System" />
@@ -161,6 +181,10 @@
       <DependentUpon>fMain.vb</DependentUpon>
       <SubType>Form</SubType>
     </Compile>
+    <Compile Include="fMain.Terrain.vb">
+      <DependentUpon>fMain.vb</DependentUpon>
+      <SubType>Form</SubType>
+    </Compile>
     <Compile Include="fMain.UI.vb">
       <DependentUpon>fMain.vb</DependentUpon>
       <SubType>Form</SubType>
@@ -191,6 +215,9 @@
       <DependentUpon>fTileSelect.vb</DependentUpon>
     </Compile>
     <Compile Include="fTileSelect.vb">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="fTerrain.vb">
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="fSettings.Designer.vb">

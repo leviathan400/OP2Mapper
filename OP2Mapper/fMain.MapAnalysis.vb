@@ -12,101 +12,54 @@ Imports OP2UtilityDotNet
 Imports OP2UtilityDotNet.Bitmap
 Imports OP2UtilityDotNet.OP2Map
 Imports OP2UtilityDotNet.Sprite
+Imports Op2MapLib
 
 ' fMain.MapAnalysis.vb
 ' Partial class of fMain (split out of fMain.vb).
 ' Map analysis tools - detection and reporting of enclosed (unreachable) areas.
+' The region analysis itself lives in op2maplib (shared with other map tools);
+' this file keeps the UI: the menu commands, the highlight overlay and the fix.
 Partial Public Class fMain
 
 #Region "Map Analysis — Enclosed Areas"
 
     ''' <summary>
-    ''' Cell types that count as "passable" for connectivity analysis — i.e.
-    ''' the types a unit can move across. In OP2, tubes are passable
-    ''' (vehicles can drive over them). Walls, cliffs, vents, and the
-    ''' pad/impassable types block movement.
-    ''' </summary>
-    Private Function IsPassableCellType(c As CellType) As Boolean
-        Select Case c
-            Case CellType.FastPassible1, CellType.FastPassible2,
-                 CellType.MediumPassible1, CellType.MediumPassible2,
-                 CellType.SlowPassible1, CellType.SlowPassible2,
-                 CellType.DozedArea, CellType.Rubble,
-                 CellType.Tube0, CellType.Tube1, CellType.Tube2,
-                 CellType.Tube3, CellType.Tube4, CellType.Tube5
-                Return True
-            Case Else
-                Return False
-        End Select
-    End Function
-
-    ''' <summary>
-    ''' Returns every connected-component of passable tiles in the map.
-    ''' Uses 8-connected neighborhood (so a region is only flagged as
-    ''' "separate" if it's truly sealed off in all eight directions).
+    ''' Returns every connected region of passable tiles in the map, largest
+    ''' first, or Nothing if op2maplib isn't available (the user is told why).
     '''
-    ''' Only the full 512×256 "world" map size wraps horizontally in OP2 —
-    ''' all smaller maps have hard edges on all four sides. The bottom row
-    ''' is always treated as impassable by convention.
+    ''' The analysis is done by op2maplib (MapRegions), with Outpost 2's rules:
+    ''' passable = fast/medium/slow passable, bulldozed, rubble and tubes;
+    ''' 8-connected, so a region only counts as separate if it's sealed off in
+    ''' all eight directions; the special impassable bottom row is skipped; and
+    ''' only the 512×256 "world" map size wraps left to right.
     ''' </summary>
     Private Function FindConnectedPassableComponents() As List(Of List(Of Point))
         Dim components As New List(Of List(Of Point))
         If currentMap Is Nothing Then Return components
 
-        Dim w As Integer = currentMap.WidthInTiles()
-        Dim h As Integer = currentMap.HeightInTiles()
-        Dim maxY As Integer = h - 2  ' skip the special impassable bottom row
-
-        ' Only the full-size world map (512×256) wraps left-to-right; every
-        ' other map size has hard edges on all 4 sides.
-        Dim wrapX As Boolean = (w = 512 AndAlso h = 256)
-
-        Dim visited(w - 1, h - 1) As Boolean
-
-        For y As Integer = 0 To maxY
+        Dim w As Integer = CInt(currentMap.WidthInTiles())
+        Dim h As Integer = CInt(currentMap.HeightInTiles())
+        Dim cellTypes(w * h - 1) As Byte
+        For y As Integer = 0 To h - 1
             For x As Integer = 0 To w - 1
-                If visited(x, y) Then Continue For
-                visited(x, y) = True
-                If Not IsPassableCellType(currentMap.GetCellType(x, y)) Then Continue For
-
-                ' BFS from (x, y) collecting every connected passable tile.
-                Dim component As New List(Of Point)
-                Dim queue As New Queue(Of Point)
-                queue.Enqueue(New Point(x, y))
-
-                While queue.Count > 0
-                    Dim p As Point = queue.Dequeue()
-                    component.Add(p)
-
-                    For dx As Integer = -1 To 1
-                        For dy As Integer = -1 To 1
-                            If dx = 0 AndAlso dy = 0 Then Continue For
-
-                            Dim nx As Integer = p.X + dx
-                            Dim ny As Integer = p.Y + dy
-
-                            If wrapX Then
-                                ' Toroidal X (only on 512×256 world maps).
-                                nx = ((nx Mod w) + w) Mod w
-                            Else
-                                ' Hard edges left/right.
-                                If nx < 0 OrElse nx >= w Then Continue For
-                            End If
-
-                            ' Y never wraps and is clamped to the playable rows.
-                            If ny < 0 OrElse ny > maxY Then Continue For
-                            If visited(nx, ny) Then Continue For
-                            visited(nx, ny) = True
-                            If IsPassableCellType(currentMap.GetCellType(nx, ny)) Then
-                                queue.Enqueue(New Point(nx, ny))
-                            End If
-                        Next
-                    Next
-                End While
-
-                components.Add(component)
+                cellTypes(y * w + x) = CByte(CInt(currentMap.GetCellType(x, y)) And &H1F)
             Next
         Next
+
+        Try
+            Using regions As MapRegions = MapRegions.Find(w, h, cellTypes)
+                For i As Integer = 0 To regions.Count - 1
+                    components.Add(New List(Of Point)(regions.Cells(i)))
+                Next
+            End Using
+        Catch ex As Exception When TypeOf ex Is DllNotFoundException OrElse
+                                   TypeOf ex Is BadImageFormatException OrElse
+                                   TypeOf ex Is EntryPointNotFoundException OrElse
+                                   TypeOf ex Is Op2MapLibException
+            MessageBox.Show("Enclosed-area analysis needs op2maplib.dll (x86\ or x64\ folder next to the program): " &
+                            ex.Message, "Enclosed Areas", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            Return Nothing
+        End Try
 
         Return components
     End Function
@@ -125,6 +78,7 @@ Partial Public Class fMain
         End If
 
         Dim components As List(Of List(Of Point)) = FindConnectedPassableComponents()
+        If components Is Nothing Then Return    ' op2maplib unavailable (already reported)
 
         If components.Count = 0 Then
             MessageBox.Show("No passable tiles found in this map.",
@@ -314,7 +268,7 @@ Partial Public Class fMain
         End If
 
         Dim components As List(Of List(Of Point)) = FindConnectedPassableComponents()
-        If components.Count <= 1 Then
+        If components Is Nothing OrElse components.Count <= 1 Then
             _highlightedEnclosedTiles = New List(Of Point)
             Return 0
         End If

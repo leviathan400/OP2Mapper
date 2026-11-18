@@ -5,9 +5,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-Current release: 0.6.0 (build 0144).
+Current release: 0.6.1 (build 0147).
 
 ### Added
+- **Terrain brush (new Terrain Brush tool window).** Pick a ground (Mud, Rock, Sand or Vegetation) and left-drag on the map. The edges where it meets other ground are filled in with the game's own transition tiles, so mud, rock and sand blend smoothly.
+  - **Brush size:** 3 to 25 tiles, set in the window or with Ctrl + mouse wheel on the map. An outline shows the brush under the mouse.
+  - **Clean Up Transitions...** re-picks the transitions across the whole map. It says how many tiles will change before doing anything.
+  - **Undo:** each drag is one undo step, covering tiles and cell types. Cell types follow the new tiles, except the bottom row stays Impassable.
+  - **Cliffs, walls, tubes and other structures** are never changed unless you paint directly over them.
+  - **How it works:** the blending is done by op2maplib, a new shared library.
+- **Draw Cliff (in the Terrain Brush window).** Turn on Draw Cliff, choose the high side (left or right of the line, north or south) and a wall height of 3 to 6, then click points on the map.
+  - Points snap to the slopes cliffs can be built in, and a yellow line previews the cliff.
+  - **Enter** or **Place Cliff** builds it from the game's mud or sand cliff tiles, with their cliff cell types. Rock and other grounds use mud cliffs.
+  - **Backspace** removes the last point, **Esc** clears them, and clicking the first point again closes the cliff into a loop.
+  - Each cliff is one undo step. Painting terrain next to a cliff leaves it in place.
 - **Always-on-top control on every tool window.** Right-click a tool window's title bar (or press Alt+Space) for two options:
   - **Always On Top (This Window)** sets just that window.
   - **All Tool Windows Always On Top** sets all of them and matches View → Tool Windows Always On Top.

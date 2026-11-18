@@ -132,6 +132,9 @@ Partial Public Class fMain
             ' Render an initial thumbnail + viewport rect for the current map.
             RefreshMiniMap()
 
+            terrainForm = New fTerrain()        ' Tool 6
+            terrainForm.Show()                  ' Terrain brush (op2maplib)
+
             ' --------------------------
 
             ' Each palette restored its own saved position in its Load. Any
@@ -169,6 +172,10 @@ Partial Public Class fMain
             If tileSelectForm IsNot Nothing Then tileSelectForm.Close() ' Tool 3
             If tileGroupsForm IsNot Nothing Then tileGroupsForm.Close() ' Tool 4
             If miniMapForm IsNot Nothing Then miniMapForm.Close()       ' Tool 5
+            If terrainForm IsNot Nothing Then terrainForm.Close()       ' Tool 6
+            GlobalVariables.TerrainToolActive = False
+            EndTerrainStroke()
+            pnlMap.Cursor = Cursors.Default
 
             '' Create a list to store forms that need to be closed
             'Dim formsToClose As New List(Of Form)
@@ -243,6 +250,48 @@ Partial Public Class fMain
     ''' from global state. Copy mode takes precedence, then tile placement, then cell type.
     ''' </summary>
     Private Sub UpdateToolAndPlacementLabels()
+        ' The terrain brush is shown here; everything else below. (fCellTypes and
+        ' fTileSet call this method by name through reflection, so the name stays.)
+        If EditModeEnabled AndAlso Not GlobalVariables.IsCopyMode AndAlso IsCliffToolActive() Then
+            Dim sides As String() = {"left", "right", "north", "south"}
+            lblCurrentTool.Text = "Current Tool: Draw Cliff"
+            lblCurrentTool.ForeColor = System.Drawing.Color.SaddleBrown
+            lblCurrentPlacement.Text = If(CliffPointCount = 0,
+                $"Click points (high {sides(GlobalVariables.CliffHighSide)}, height {GlobalVariables.CliffWallHeight})",
+                $"{CliffPointCount} point(s): Enter places the cliff")
+            lblCurrentPlacement.ForeColor = System.Drawing.Color.SaddleBrown
+            If picSelectedTool IsNot Nothing Then
+                If picSelectedTool.Image IsNot Nothing Then
+                    picSelectedTool.Image.Dispose()
+                    picSelectedTool.Image = Nothing
+                End If
+                picSelectedTool.BackColor = System.Drawing.Color.FromArgb(255, 210, 90)
+            End If
+        ElseIf EditModeEnabled AndAlso Not GlobalVariables.IsCopyMode AndAlso IsTerrainToolActive() Then
+            lblCurrentTool.Text = "Current Tool: Terrain Brush"
+            lblCurrentTool.ForeColor = System.Drawing.Color.SaddleBrown
+            lblCurrentPlacement.Text = $"Painting: {GlobalVariables.TerrainGroundName} (size {GlobalVariables.TerrainBrushSize})"
+            lblCurrentPlacement.ForeColor = System.Drawing.Color.SaddleBrown
+            If picSelectedTool IsNot Nothing Then
+                If picSelectedTool.Image IsNot Nothing Then
+                    picSelectedTool.Image.Dispose()
+                    picSelectedTool.Image = Nothing
+                End If
+                Dim profile = GetTerrainProfile()
+                picSelectedTool.BackColor = If(profile IsNot Nothing,
+                    fTerrain.GroundColour(profile.GroundId(GlobalVariables.TerrainGround)),
+                    System.Drawing.Color.Black)
+            End If
+        Else
+            UpdateToolAndPlacementLabelsCore()
+        End If
+        SyncTerrainPalette()
+    End Sub
+
+    ''' <summary>
+    ''' The tool labels for every tool except the terrain brush (see UpdateToolAndPlacementLabels).
+    ''' </summary>
+    Private Sub UpdateToolAndPlacementLabelsCore()
         ' If edit mode is not enabled, clear the labels
         If Not EditModeEnabled Then
             lblCurrentTool.Text = "No Tool Selected"
