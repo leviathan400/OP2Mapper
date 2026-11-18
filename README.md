@@ -90,7 +90,7 @@ Settings and window positions are saved in `Mapper3.ini` next to the program.
   next to the repository folder (`..\other` from the repository root):
   - `OP2UtilityDotNet.dll` and `OP2MapJsonTools.dll`;
   - `Op2MapLib.Net.dll`, plus op2maplib's native DLLs and profile in
-    `other\op2maplib\` (`x86\`, `x64\` and `profiles\op2.json`).
+    `other\op2maplib\` (`x86\`, `x64\` and `op2.json`).
 - **NuGet:** restore Newtonsoft.Json 13.0.4, then build `OP2Mapper.sln`.
 
 [ARCHITECTURE.md](ARCHITECTURE.md) describes the code, and

@@ -80,7 +80,7 @@
   </ItemGroup>
   <!-- op2maplib (terrain brush, cliffs, enclosed areas), prebuilt in ..\..\other like the
        other libraries: the .NET binding, plus the native DLLs and the profile, which are
-       copied to x86\, x64\ and op2maplib\profiles\ in the output folder. -->
+       copied to x86\, x64\ and op2maplib\ in the output folder. -->
   <ItemGroup>
     <Reference Include="Op2MapLib.Net">
       <HintPath>..\..\other\Op2MapLib.Net.dll</HintPath>
@@ -93,8 +93,8 @@
       <Link>x64\op2maplib.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="..\..\other\op2maplib\profiles\op2.json">
-      <Link>op2maplib\profiles\op2.json</Link>
+    <Content Include="..\..\other\op2maplib\op2.json">
+      <Link>op2maplib\op2.json</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

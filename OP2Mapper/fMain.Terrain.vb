@@ -41,7 +41,7 @@ Partial Public Class fMain
     Private terrainHoverY As Integer = -1
 
     ''' <summary>
-    ''' The blend profile (op2maplib\profiles\op2.json next to the exe), or
+    ''' The blend profile (op2maplib\op2.json next to the exe), or
     ''' Nothing if the library or profile couldn't be loaded. The reason is in
     ''' TerrainProfileError.
     ''' </summary>
@@ -56,7 +56,7 @@ Partial Public Class fMain
             Catch ex As BadImageFormatException
                 terrainProfileLoadError = "op2maplib.dll is the wrong build for this process (32/64-bit)."
             Catch ex As FileNotFoundException
-                terrainProfileLoadError = "the blend profile op2maplib\profiles\op2.json was not found next to the program."
+                terrainProfileLoadError = "the blend profile op2maplib\op2.json was not found next to the program."
             Catch ex As Exception
                 terrainProfileLoadError = ex.Message
             End Try
