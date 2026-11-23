@@ -530,7 +530,7 @@ Public Class fNewMap
         ' Associate the new map with the user's working directory so it doesn't
         ' look like it lives in the BlankMaps templates folder. Save Map's
         ' dialog will default to this path too.
-        fMain.SetMapFileName(FileName, My.Settings.WorkingPath)
+        fMain.SetMapFileName(FileName, AppSettings.WorkingPath)
 
         ' LoadMapFile cleared the dirty flag, but the new map has never been
         ' saved — mark it dirty so closing/opening prompts to save it (and so

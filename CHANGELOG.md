@@ -5,9 +5,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-Current release: 0.7.0 (build 0150).
+Current release: 0.7.1 (build 0155).
 
 ### Added
+- **Generate New Map (File menu, Ctrl+Shift+N).** Builds a whole map from a seed with op2maplib's map generator.
+  - **Settings:** size, a template (Plains, Canyon, Desert, Islands, Ice or New Terra), the terrain mix, roughness, minimum biome size, symmetry (mirrored, rotated or four-way), cliffs, rocks and craters, spawn points and volcanoes.
+  - **Features:** add valleys (optionally with a lava floor), mountains, plateaus, clearings and chokes, each with a position and size.
+  - **Generate** builds the map straight into the main view as a new, unsaved map, with lava-possible areas set around volcanoes. **Roll** picks a new seed and generates again. A generated map that hasn't been edited is replaced without asking.
+  - Spawn points and volcanoes are marked on the map as a guide. Outpost 2 maps don't store them, so they disappear when another map is opened.
+  - The settings are remembered in `Mapper3.ini`.
+- **OP2Launcher is bundled.** **File → Launch OP2 into DLL Picker** installs `op2launcher.exe` and `Launcher.dll` into the Outpost 2 `OPU` folder the first time it's needed, so there's nothing to copy by hand. If a different copy is already installed, you're asked before it's replaced.
+- **Log file.** `OP2Mapper.log` next to the program records starts and closes, crashes, update checks and the updater, OP2Launcher installs, folder changes, and maps opened and saved. It's kept under 1 MB, with the previous part in `OP2Mapper.old.log`.
 - **Terrain brush (new Terrain Brush tool window).** Pick a ground (Mud, Rock, Sand or Vegetation) and left-drag on the map. The edges where it meets other ground are filled in with the game's own transition tiles, so mud, rock and sand blend smoothly.
   - **Brush size:** 3 to 25 tiles, set in the window or with Ctrl + mouse wheel on the map. An outline shows the brush under the mouse.
   - **Clean Up Transitions...** re-picks the transitions across the whole map. It says how many tiles will change before doing anything.
@@ -63,6 +71,8 @@ Current release: 0.7.0 (build 0150).
 #### Startup
 - **A missing or blocked `updater.exe` no longer closes the app.** The app exits for an update only if the updater actually started.
 - **The update check no longer freezes startup.** It runs in the background, so a slow or offline connection can't hold up the splash screen. If the check finishes before the main window opens, an update installs as before. If it finishes later, you're asked first and offered the chance to save.
+- **Starting the mapper again while it's open now brings the open window forward.** A map given on the command line (for example by double-clicking a `.map` file) opens there, after the unsaved-changes check. Before, the second start quietly closed, which looked like a crash.
+- **The splash screen shows the real version and build,** for example "Version 0.7.1 (build 0155)", instead of "0.07".
 
 #### Tool windows
 - **Tool windows remember their positions between runs, on any monitor.** Only Tile Set's position was ever saved. The other four were closed at exit without saving, so they came back piled up at the top-left. Positions are now saved when a window is moved and again when the app closes. Any window without a usable saved position, such as one last on a monitor that's no longer connected, gets the default layout. The others stay where they were. The main window also saves its position when moved, resized, maximized or restored, not only on exit.
@@ -109,6 +119,7 @@ Current release: 0.7.0 (build 0150).
 - **The cell-type text overlay is much cheaper.** Each label is drawn once and reused. When zoomed out below a readable size, the overlay shows colours instead of text.
 
 ### Changed
+- **Folder settings are stored in `Mapper3.ini`** next to the program, in a `[Paths]` section, instead of the Windows user profile. Each copy of OP2Mapper keeps its own settings and can be moved as a folder. Existing folder choices are carried over automatically on first start. The default map folder chosen in Settings is now also kept between runs; it used to be reset to the Outpost 2 folder at every start.
 - **Tidier sidebar, with a list of the map's tilesets.** The main window's sidebar is now grouped into titled sections: Map, Tilesets, Tile Under Cursor, View and Editing. The new Tilesets section lists every tileset BMP the loaded map uses, with its tile count. The section title gives the total and flags any tileset that couldn't be found. Long text ends in "…" and shows in full on hover, and the sidebar scrolls if the window is too short.
 - A paint drag stops at the locked bottom row instead of continuing past it.
 - At low zoom, the "Cell Type Overlay All" mode shows the colour overlay instead of unreadable labels.

@@ -113,6 +113,8 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="ApplicationEvents.vb" />
+    <Compile Include="AppSettings.vb" />
+    <Compile Include="AppLog.vb" />
     <Compile Include="Commands.vb" />
     <Compile Include="fAbout.Designer.vb">
       <DependentUpon>fAbout.vb</DependentUpon>
@@ -181,6 +183,10 @@
       <DependentUpon>fMain.vb</DependentUpon>
       <SubType>Form</SubType>
     </Compile>
+    <Compile Include="fMain.Generate.vb">
+      <DependentUpon>fMain.vb</DependentUpon>
+      <SubType>Form</SubType>
+    </Compile>
     <Compile Include="fMain.Terrain.vb">
       <DependentUpon>fMain.vb</DependentUpon>
       <SubType>Form</SubType>
@@ -218,6 +224,9 @@
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="fTerrain.vb">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="fGenerateMap.vb">
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="fSettings.Designer.vb">
@@ -312,6 +321,13 @@
       <DependentUpon>fSplashScreen.vb</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="BlankMaps\blankmaps.zip" />
+    <!-- OP2Launcher (op2launcher.exe + Launcher.dll), installed into <OP2Path>\OPU on first use: see OP2Launcher.vb -->
+    <EmbeddedResource Include="OP2Launcher\op2launcher.exe">
+      <LogicalName>OP2Launcher.op2launcher.exe</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="OP2Launcher\Launcher.dll">
+      <LogicalName>OP2Launcher.Launcher.dll</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
   <ItemGroup>
     <None Include="My Project\app.manifest" />

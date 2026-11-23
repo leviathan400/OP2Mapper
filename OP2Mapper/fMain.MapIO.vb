@@ -40,7 +40,7 @@ Partial Public Class fMain
 
         ' Check if resource manager is initialized
         If resourceManager Is Nothing Then
-            If String.IsNullOrEmpty(My.Settings.OP2Path) OrElse Not Directory.Exists(My.Settings.OP2Path) Then
+            If String.IsNullOrEmpty(AppSettings.OP2Path) OrElse Not Directory.Exists(AppSettings.OP2Path) Then
                 ShowSettingsDialog()
 
                 If resourceManager Is Nothing Then
@@ -48,7 +48,7 @@ Partial Public Class fMain
                 End If
             Else
                 Try
-                    resourceManager = New ResourceManager(My.Settings.OP2Path)
+                    resourceManager = New ResourceManager(AppSettings.OP2Path)
                 Catch ex As Exception
                     MessageBox.Show("Error initializing resource manager: " & ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
                     Return False
@@ -169,10 +169,12 @@ Partial Public Class fMain
             pnlMap.Invalidate()
 
             Debug.WriteLine(" Map loaded successfully: " & currentMapFile)
+            AppLog.Write("Map", "Opened " & mapFilePath)
 
             Return True
 
         Catch ex As Exception
+            AppLog.WriteError("Map", "Could not open " & mapFilePath, ex)
             MessageBox.Show("Error loading map: " & ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
             Return False
         End Try
@@ -202,7 +204,7 @@ Partial Public Class fMain
         Using openDialog As New OpenFileDialog()
             openDialog.Filter = "Outpost 2 Map Files (*.map)|*.map|All Files (*.*)|*.*"
             openDialog.Title = "Open Outpost 2 Map"
-            openDialog.InitialDirectory = My.Settings.OP2Path
+            openDialog.InitialDirectory = AppSettings.OP2Path
 
             If openDialog.ShowDialog() = DialogResult.OK Then
                 If LoadMapFile(openDialog.FileName) Then
@@ -353,6 +355,10 @@ Partial Public Class fMain
             Else
                 File.Move(tempPath, targetPath)
             End If
+            AppLog.Write("Map", "Saved " & targetPath)
+        Catch ex As Exception
+            AppLog.WriteError("Map", "Could not save " & targetPath, ex)
+            Throw
         Finally
             Try
                 If File.Exists(tempPath) Then File.Delete(tempPath)
@@ -376,7 +382,7 @@ Partial Public Class fMain
             saveDialog.Title = "Save Outpost 2 Map"
 
             ' Default to the map's current folder. For a freshly-created New
-            ' Map this is My.Settings.WorkingPath; for a loaded map it's where
+            ' Map this is AppSettings.WorkingPath; for a loaded map it's where
             ' it was loaded from / last saved.
             If Not String.IsNullOrEmpty(currentMapPath) AndAlso Directory.Exists(currentMapPath) Then
                 saveDialog.InitialDirectory = currentMapPath
@@ -567,7 +573,7 @@ Partial Public Class fMain
                     "Could not find the Outpost 2 tileset folder, so the map will show placeholder tiles." & vbCrLf & vbCrLf &
                     "Looked in these folders under the Outpost 2 path:" & vbCrLf &
                     "  OPU\base\tilesets" & vbCrLf & "  base\tilesets" & vbCrLf & "  tilesets" & vbCrLf & vbCrLf &
-                    "Outpost 2 path: " & If(String.IsNullOrEmpty(My.Settings.OP2Path), "(not set)", My.Settings.OP2Path) & vbCrLf &
+                    "Outpost 2 path: " & If(String.IsNullOrEmpty(AppSettings.OP2Path), "(not set)", AppSettings.OP2Path) & vbCrLf &
                     "Check it in File → Settings.",
                     "Tilesets Not Found", MessageBoxButtons.OK, MessageBoxIcon.Warning)
                 Return

@@ -17,9 +17,9 @@ Public Class fSettings
         panelBanner.BackgroundImage = My.Resources.banner03_620x100
 
         ' Load the current values from My.Settings into the text boxes
-        txtOP2Path.Text = My.Settings.OP2Path
-        txtDefaultSaveDirectory.Text = My.Settings.WorkingPath
-        txtTilegroups.Text = My.Settings.Tilegroups
+        txtOP2Path.Text = AppSettings.OP2Path
+        txtDefaultSaveDirectory.Text = AppSettings.WorkingPath
+        txtTilegroups.Text = AppSettings.Tilegroups
     End Sub
 
     ''' <summary>
@@ -156,13 +156,10 @@ Public Class fSettings
         If Not EnsureFolderOrAsk(workingPath, "default save directory", txtDefaultSaveDirectory) Then Return
         If Not EnsureFolderOrAsk(tilegroupsPath, "tile groups directory", txtTilegroups) Then Return
 
-        ' Store the values directly to My.Settings
-        My.Settings.OP2Path = op2Path
-        My.Settings.WorkingPath = workingPath
-        My.Settings.Tilegroups = tilegroupsPath
-
-        ' Save the settings
-        My.Settings.Save()
+        ' Store the values in Mapper3.ini ([Paths]); each one is written straight away.
+        AppSettings.OP2Path = op2Path
+        AppSettings.WorkingPath = workingPath
+        AppSettings.Tilegroups = tilegroupsPath
 
         ' Close the form
         Me.DialogResult = DialogResult.OK

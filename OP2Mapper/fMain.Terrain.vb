@@ -51,6 +51,7 @@ Partial Public Class fMain
             Try
                 terrainProfile = BlendProfile.LoadDefault()
                 Debug.WriteLine($"op2maplib {BlendProfile.LibraryVersion}: {terrainProfile.Name}")
+                AppLog.Write("op2maplib", $"Loaded op2maplib {BlendProfile.LibraryVersion}, profile: {terrainProfile.Name}")
             Catch ex As DllNotFoundException
                 terrainProfileLoadError = "op2maplib.dll was not found next to the program (x86\ or x64\ folder)."
             Catch ex As BadImageFormatException
@@ -60,6 +61,7 @@ Partial Public Class fMain
             Catch ex As Exception
                 terrainProfileLoadError = ex.Message
             End Try
+            If terrainProfile Is Nothing Then AppLog.Write("op2maplib", "Not available: " & terrainProfileLoadError)
         End If
         Return terrainProfile
     End Function

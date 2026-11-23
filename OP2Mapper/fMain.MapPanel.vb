@@ -533,6 +533,9 @@ Partial Public Class fMain
             DrawTerrainOutline(e.Graphics)
             DrawCliffPreview(e.Graphics)
 
+            ' Spawn points and volcanoes of a generated map
+            DrawGeneratedMarkers(e.Graphics)
+
             ' Draw selection rectangle if a tile is selected
             If currentTileX >= 0 AndAlso currentTileY >= 0 AndAlso
                 currentTileX < currentMap.WidthInTiles() AndAlso currentTileY < currentMap.HeightInTiles() Then

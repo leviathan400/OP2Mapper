@@ -120,7 +120,7 @@ Public Class fTileGroups
         ' <exe>\Tilegroups on first run by fMain_Load). This is the same
         ' folder fTileSelect writes exports to, so a tile group exported on
         ' one launch is visible in this list on the next.
-        TileGroupsFolder = My.Settings.Tilegroups
+        TileGroupsFolder = AppSettings.Tilegroups
 
         ResetLabels()
 
@@ -146,7 +146,7 @@ Public Class fTileGroups
     ''' </summary>
     Public Sub RefreshFromDisk(Optional selectFolder As String = Nothing)
         ' Re-scan from the configured location (may have changed since Load).
-        TileGroupsFolder = My.Settings.Tilegroups
+        TileGroupsFolder = AppSettings.Tilegroups
         LoadTileGroupFolders(TileGroupsFolder)
 
         ' Try to select the requested folder.

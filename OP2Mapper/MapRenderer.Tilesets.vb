@@ -36,7 +36,7 @@ Partial Public Class MapRenderer
         _tilesetDirectory = Nothing
 
         ' Default tileset paths
-        Dim tilesetPath As String = Path.Combine(My.Settings.OP2Path, "OPU\base\tilesets")
+        Dim tilesetPath As String = Path.Combine(AppSettings.OP2Path, "OPU\base\tilesets")
         Dim alternatePaths() As String = {"base\tilesets", "tilesets"}
 
         ' Check if the tileset path exists
@@ -44,7 +44,7 @@ Partial Public Class MapRenderer
             ' Try alternate paths
             Dim found As Boolean = False
             For Each altPath In alternatePaths
-                Dim fullAltPath As String = Path.Combine(My.Settings.OP2Path, altPath)
+                Dim fullAltPath As String = Path.Combine(AppSettings.OP2Path, altPath)
                 If Directory.Exists(fullAltPath) Then
                     tilesetPath = fullAltPath
                     found = True

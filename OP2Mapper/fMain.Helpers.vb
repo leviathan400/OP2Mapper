@@ -38,18 +38,18 @@ Partial Public Class fMain
         Debug.WriteLine("=========== TILESET LOADING DIAGNOSTICS ===========")
 
         ' Check if OP2Path is set correctly
-        Debug.WriteLine($"OP2Path: {My.Settings.OP2Path}")
-        Debug.WriteLine($"OP2Path exists: {Directory.Exists(My.Settings.OP2Path)}")
+        Debug.WriteLine($"OP2Path: {AppSettings.OP2Path}")
+        Debug.WriteLine($"OP2Path exists: {Directory.Exists(AppSettings.OP2Path)}")
 
         ' Check tileset directory paths
-        Dim tilesetPath As String = Path.Combine(My.Settings.OP2Path, "OPU\base\tilesets")
+        Dim tilesetPath As String = Path.Combine(AppSettings.OP2Path, "OPU\base\tilesets")
         Debug.WriteLine($"Primary tileset path: {tilesetPath}")
         Debug.WriteLine($"Primary tileset path exists: {Directory.Exists(tilesetPath)}")
 
         ' List alternate paths
         Dim alternatePaths = New String() {
-        Path.Combine(My.Settings.OP2Path, "base\tilesets"),
-        Path.Combine(My.Settings.OP2Path, "tilesets")
+        Path.Combine(AppSettings.OP2Path, "base\tilesets"),
+        Path.Combine(AppSettings.OP2Path, "tilesets")
     }
 
         For Each path In alternatePaths

@@ -1,4 +1,4 @@
-# OP2Mapper
+# OP2Mapper3
 
 ![Screenshot](https://images.outpostuniverse.org/OP2Mapper3.png)
 
@@ -6,7 +6,7 @@ OP2Mapper3 is a modern map editor for **Outpost 2: Divided Destiny**. It opens
 and saves the game's `.map` files and lets you edit their tiles and cell types,
 with painting tools that understand the game's terrain.
 
-**Current version: 0.7.0.** Downloads are on the [Releases](https://github.com/leviathan400/OP2Mapper/releases) page, and the [changelog](CHANGELOG.md) lists every change.
+**Current version: 0.7.1.** Downloads are on the [Releases](https://github.com/leviathan400/OP2Mapper/releases) page, and the [changelog](CHANGELOG.md) lists every change.
 
 ## Features
 
@@ -20,6 +20,10 @@ with painting tools that understand the game's terrain.
   or sand cliff tiles, with the right cliff cell types. Click the first point
   again for a closed plateau.
 - **Cliffs, walls and tubes are left alone** unless you paint directly over them.
+- **Generate New Map:** builds a whole map from a seed: terrain mix, roughness,
+  symmetry, cliffs, rocks and craters, volcanoes and spawn points, plus valleys,
+  mountains, plateaus, clearings and chokes where you want them. Roll tries
+  another seed.
 
 ### Editing
 - **Tile painting:** click or drag-paint any tile from any loaded tileset.
@@ -63,7 +67,8 @@ monitors, and can each be set to stay on top.
 1. Download the latest release and unzip it.
 2. Run `OP2Mapper.exe`. The first time, choose your Outpost 2 folder, or start
    it with `OP2Mapper.exe /op2dir "C:\Games\Outpost 2"`.
-3. Open a map with **File → Open**, or start one with **File → New**.
+3. Open a map with **File → Open**, start a blank one with **File → New**, or
+   build one from a seed with **File → Generate New Map**.
 4. Click **Enable Edit Mode** to show the tool windows and start editing.
 
 Settings and window positions are saved in `Mapper3.ini` next to the program.
@@ -73,6 +78,7 @@ Settings and window positions are saved in `Mapper3.ini` next to the program.
 | Keys | Action |
 |---|---|
 | Ctrl+N / Ctrl+O / Ctrl+S | New / open / save map |
+| Ctrl+Shift+N | Generate new map |
 | Ctrl+Z / Ctrl+Y | Undo / redo |
 | Ctrl+C / Ctrl+V | Copy an area / paste |
 | Ctrl+B | Place the selected tile group |
@@ -90,7 +96,8 @@ Settings and window positions are saved in `Mapper3.ini` next to the program.
   next to the repository folder (`..\other` from the repository root):
   - `OP2UtilityDotNet.dll` and `OP2MapJsonTools.dll`;
   - `Op2MapLib.Net.dll`, plus op2maplib's native DLLs and profile in
-    `other\op2maplib\` (`x86\`, `x64\` and `op2.json`).
+    `other\op2maplib\` (`x86\`, `x64\` and `op2.json`). op2maplib's source is
+    [OP2MappingLib](https://github.com/OutpostUniverse/OP2MappingLib).
 - **NuGet:** restore Newtonsoft.Json 13.0.4, then build `OP2Mapper.sln`.
 
 [ARCHITECTURE.md](ARCHITECTURE.md) describes the code, and
@@ -101,3 +108,4 @@ Settings and window positions are saved in `Mapper3.ini` next to the program.
 - [OP2MissionEditor](https://github.com/leviathan400/OP2MissionEditor): a newer map editor from 2019
 - [OP2Mapper2](https://github.com/leviathan400/OP2Mapper2): the original OPU map editor from 2005
 - [OP2UtilityDotNet](https://github.com/leviathan400/OP2UtilityDotNet): .NET library for working with Outpost 2 files
+- [OP2MappingLib](https://github.com/OutpostUniverse/OP2MappingLib): op2maplib, the terrain blending, cliff, enclosed-area and map generator library OP2Mapper uses

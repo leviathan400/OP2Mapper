@@ -187,6 +187,19 @@ Module ToolPaletteHelper
     End Sub
 
     ''' <summary>
+    ''' Reads a value from any section of Mapper3.ini (e.g. [Paths], used by
+    ''' AppSettings), or defaultValue when the key isn't there.
+    ''' </summary>
+    Public Function ReadIniSetting(section As String, key As String, defaultValue As String) As String
+        Return ReadIniValue(key, defaultValue, section)
+    End Function
+
+    ''' <summary>Writes a value to any section of Mapper3.ini, creating the section if needed.</summary>
+    Public Sub WriteIniSetting(section As String, key As String, value As String)
+        WriteIniValue(key, value, section)
+    End Sub
+
+    ''' <summary>
     ''' Applies the supplied TopMost value to every registered tool palette
     ''' that's currently open. Called by fMain when the user toggles the
     ''' "Tool Windows Always On Top" menu item.
@@ -292,7 +305,7 @@ Module ToolPaletteHelper
     ''' <summary>
     ''' Reads a value from the INI file
     ''' </summary>
-    Private Function ReadIniValue(key As String, Optional defaultValue As String = "") As String
+    Private Function ReadIniValue(key As String, Optional defaultValue As String = "", Optional section As String = WindowSection) As String
         Dim iniPath As String = GetIniFilePath()
 
         If Not File.Exists(iniPath) Then
@@ -308,7 +321,7 @@ Module ToolPaletteHelper
 
                 ' Check for section header
                 If trimmedLine.StartsWith("[") AndAlso trimmedLine.EndsWith("]") Then
-                    inWindowSection = trimmedLine.Equals($"[{WindowSection}]", StringComparison.OrdinalIgnoreCase)
+                    inWindowSection = trimmedLine.Equals($"[{section}]", StringComparison.OrdinalIgnoreCase)
                     Continue For
                 End If
 
@@ -328,7 +341,7 @@ Module ToolPaletteHelper
     ''' <summary>
     ''' Writes a value to the INI file
     ''' </summary>
-    Private Sub WriteIniValue(key As String, value As String)
+    Private Sub WriteIniValue(key As String, value As String, Optional section As String = WindowSection)
         Dim iniPath As String = GetIniFilePath()
         Dim lines As New List(Of String)
         Dim keyFound As Boolean = False
@@ -354,7 +367,7 @@ Module ToolPaletteHelper
                 If inWindowSection Then
                     windowSectionEndIndex = i
                 End If
-                inWindowSection = trimmedLine.Equals($"[{WindowSection}]", StringComparison.OrdinalIgnoreCase)
+                inWindowSection = trimmedLine.Equals($"[{section}]", StringComparison.OrdinalIgnoreCase)
                 If inWindowSection Then
                     sectionFound = True
                 End If
@@ -378,7 +391,7 @@ Module ToolPaletteHelper
             If lines.Count > 0 AndAlso Not String.IsNullOrWhiteSpace(lines(lines.Count - 1)) Then
                 lines.Add("")
             End If
-            lines.Add($"[{WindowSection}]")
+            lines.Add($"[{section}]")
             lines.Add($"{key}={value}")
             keyFound = True
         ElseIf Not keyFound Then

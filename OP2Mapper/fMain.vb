@@ -179,8 +179,7 @@ Public Class fMain
         ' (and is saved), so startup skips the first-run folder prompt.
         If commandLineOp2Dir IsNot Nothing Then
             If Directory.Exists(commandLineOp2Dir) Then
-                My.Settings.OP2Path = commandLineOp2Dir
-                My.Settings.Save()
+                AppSettings.OP2Path = commandLineOp2Dir
                 Debug.WriteLine("Outpost 2 folder from command line: " & commandLineOp2Dir)
             Else
                 MessageBox.Show("The Outpost 2 folder given on the command line doesn't exist:" &
@@ -189,21 +188,23 @@ Public Class fMain
             End If
         End If
 
-        My.Settings.WorkingPath = My.Settings.OP2Path
+        ' Default folder for opening and saving maps: the Outpost 2 folder until
+        ' the user picks another in Settings. (This used to be reset to the
+        ' Outpost 2 folder on every start, so a chosen folder never stuck.)
+        If String.IsNullOrEmpty(AppSettings.WorkingPath) Then AppSettings.WorkingPath = AppSettings.OP2Path
 
         ' Tile-group export location. Default to <exe>\Tilegroups on first run
         ' (or if the user cleared it), and create the folder if it doesn't
         ' exist so the export code can write straight to it.
-        If String.IsNullOrEmpty(My.Settings.Tilegroups) Then
-            My.Settings.Tilegroups = Path.Combine(Application.StartupPath, "Tilegroups")
-            My.Settings.Save()
+        If String.IsNullOrEmpty(AppSettings.Tilegroups) Then
+            AppSettings.Tilegroups = Path.Combine(Application.StartupPath, "Tilegroups")
         End If
         Try
-            If Not Directory.Exists(My.Settings.Tilegroups) Then
-                Directory.CreateDirectory(My.Settings.Tilegroups)
+            If Not Directory.Exists(AppSettings.Tilegroups) Then
+                Directory.CreateDirectory(AppSettings.Tilegroups)
             End If
         Catch ex As Exception
-            Debug.WriteLine($"Could not create Tilegroups folder at {My.Settings.Tilegroups}: {ex.Message}")
+            Debug.WriteLine($"Could not create Tilegroups folder at {AppSettings.Tilegroups}: {ex.Message}")
         End Try
 
         ' Check if OP2 path is set. On first launch fMain has just been shown
@@ -211,7 +212,7 @@ Public Class fMain
         ' with placeholder "lblMapName" etc. labels behind the welcome dialog.
         ' Opacity=0 keeps the form in the show sequence (avoids re-layout
         ' flicker) while making it visually invisible.
-        If String.IsNullOrEmpty(My.Settings.OP2Path) OrElse Not Directory.Exists(My.Settings.OP2Path) Then
+        If String.IsNullOrEmpty(AppSettings.OP2Path) OrElse Not Directory.Exists(AppSettings.OP2Path) Then
             Me.Opacity = 0
             Try
                 MessageBox.Show("Welcome. First step is to browse for the Outpost 2 (1.4.1) folder. Click the browse button to locate the folder.", "Welcome", MessageBoxButtons.OK, MessageBoxIcon.Information)
@@ -222,7 +223,7 @@ Public Class fMain
 
             ' The mapper can't load tilesets without the Outpost 2 folder, so
             ' if Settings was cancelled without one, explain and quit.
-            If String.IsNullOrEmpty(My.Settings.OP2Path) OrElse Not Directory.Exists(My.Settings.OP2Path) Then
+            If String.IsNullOrEmpty(AppSettings.OP2Path) OrElse Not Directory.Exists(AppSettings.OP2Path) Then
                 Me.Opacity = 0
                 MessageBox.Show("No Outpost 2 folder is set, so " & ApplicationName & " will now close." &
                                 Environment.NewLine & Environment.NewLine &
@@ -276,6 +277,38 @@ Public Class fMain
 
         'Dim player As New SoundPlayer(My.Resources.earthwrk)
         'player.Play()
+    End Sub
+
+    ''' <summary>
+    ''' Another launch of OP2Mapper while this one is running (see
+    ''' ApplicationEvents.vb): restore and activate this window, and open the
+    ''' map from that launch's command line if it gave one, asking first about
+    ''' unsaved changes. /op2dir is ignored here, since the folder is already set.
+    ''' </summary>
+    Friend Sub HandleNextInstance(commandLine As IList(Of String))
+        If WindowState = FormWindowState.Minimized Then WindowState = FormWindowState.Normal
+        Activate()
+
+        Dim mapFile As String = Nothing
+        Dim i As Integer = 0
+        While commandLine IsNot Nothing AndAlso i < commandLine.Count
+            Dim arg As String = commandLine(i)
+            Dim name As String = arg.TrimStart("/"c, "-"c)
+            If arg.Length > name.Length AndAlso name.StartsWith("op2dir", StringComparison.OrdinalIgnoreCase) Then
+                If name.Length = "op2dir".Length Then i += 1     ' "/op2dir path": skip the path too
+            ElseIf mapFile Is Nothing Then
+                mapFile = arg
+            End If
+            i += 1
+        End While
+
+        If String.IsNullOrEmpty(mapFile) Then Return
+        If Not File.Exists(mapFile) Then
+            MessageBox.Show("Map file not found:" & vbCrLf & mapFile, "Open Map",
+                            MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            Return
+        End If
+        If ConfirmDiscardUnsavedChanges() Then LoadMapFile(mapFile)
     End Sub
 
     ''' <summary>
@@ -491,6 +524,7 @@ Public Class fMain
             e.Cancel = True
             Return
         End If
+        AppLog.Write("Stop", "Main window closing")
 
         ' Save fMain's window position+size+state here as well as in FormClosing.
         ' Earlier debugging showed FormClosing doesn't always fire on every
@@ -520,7 +554,7 @@ Public Class fMain
                 ' the instance: fTileSet reads MapResourceManager on each use,
                 ' and MapRenderer only stores its reference.
                 Dim oldManager As ResourceManager = resourceManager
-                resourceManager = New ResourceManager(My.Settings.OP2Path)
+                resourceManager = New ResourceManager(AppSettings.OP2Path)
                 If oldManager IsNot Nothing Then oldManager.Dispose()
             Catch ex As Exception
                 MessageBox.Show("Error initializing resource manager: " & ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
@@ -626,6 +660,14 @@ Public Class fMain
         }
         AddHandler newMapMenuItem.Click, AddressOf NewMap_Click
         fileMenu.DropDownItems.Add(newMapMenuItem)
+
+        ' Generate New Map: op2maplib's map generator (fGenerateMap)
+        Dim generateMapMenuItem As New ToolStripMenuItem("Generate New Map...") With {
+            .Name = "mnuGenerateMap",
+            .ShortcutKeys = Keys.Control Or Keys.Shift Or Keys.N
+        }
+        AddHandler generateMapMenuItem.Click, AddressOf GenerateMap_Click
+        fileMenu.DropDownItems.Add(generateMapMenuItem)
 
         ' Create Open Map menu item
         Dim openMapMenuItem As New ToolStripMenuItem("Open Map") With {

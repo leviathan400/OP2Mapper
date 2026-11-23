@@ -49,8 +49,8 @@ Partial Public Class fMain
     Private Sub PlayEditModeSound()
         Try
             If editModeSoundPlayer Is Nothing Then
-                If String.IsNullOrEmpty(My.Settings.OP2Path) Then Return
-                Dim soundPath As String = Path.Combine(My.Settings.OP2Path, EditModeSoundFile)
+                If String.IsNullOrEmpty(AppSettings.OP2Path) Then Return
+                Dim soundPath As String = Path.Combine(AppSettings.OP2Path, EditModeSoundFile)
                 If Not File.Exists(soundPath) Then
                     Debug.WriteLine("Edit mode sound not found: " & soundPath)
                     Return

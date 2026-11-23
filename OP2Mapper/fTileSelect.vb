@@ -786,10 +786,10 @@ Public Class fTileSelect
         ' user exports in their own subfolder means the Tile Groups window
         ' shows them under a dedicated "Exported" category alongside any
         ' curated/shared sets the user has dropped in by hand.
-        If String.IsNullOrEmpty(My.Settings.Tilegroups) Then
-            My.Settings.Tilegroups = Path.Combine(Application.StartupPath, "Tilegroups")
+        If String.IsNullOrEmpty(AppSettings.Tilegroups) Then
+            AppSettings.Tilegroups = Path.Combine(Application.StartupPath, "Tilegroups")
         End If
-        Dim exportFolder As String = Path.Combine(My.Settings.Tilegroups, "Exported")
+        Dim exportFolder As String = Path.Combine(AppSettings.Tilegroups, "Exported")
         If Not Directory.Exists(exportFolder) Then
             Directory.CreateDirectory(exportFolder)
         End If
@@ -825,7 +825,7 @@ Public Class fTileSelect
             End If
 
             ' Create full path for the exported file (goes in <Tilegroups>\Exported\)
-            Dim filePath As String = Path.Combine(My.Settings.Tilegroups, "Exported", $"{tileGroupName}.json")
+            Dim filePath As String = Path.Combine(AppSettings.Tilegroups, "Exported", $"{tileGroupName}.json")
 
             ' Get reference to the map
             Dim map = mainForm.CurrentLoadedMap
@@ -960,7 +960,7 @@ Public Class fTileSelect
             End If
 
             ' Create full path for the exported file (goes in <Tilegroups>\Exported\)
-            Dim filePath As String = Path.Combine(My.Settings.Tilegroups, "Exported", $"{tileName}.bmp")
+            Dim filePath As String = Path.Combine(AppSettings.Tilegroups, "Exported", $"{tileName}.bmp")
 
             ' Render a full-size (32 px per tile) copy without the grid lines
             ' and border. Sized from the copied region, not the on-screen

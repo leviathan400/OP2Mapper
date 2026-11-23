@@ -66,7 +66,10 @@ Module mUpdateChecker
         Dim serverVersion As String = GetServerVersion()
 
         ' If we couldn't reach the server, just continue
-        If serverVersion = "ERROR" Then Return Nothing
+        If serverVersion = "ERROR" Then
+            AppLog.Write("Update", "Update check: server not reachable")
+            Return Nothing
+        End If
 
         ' The server must return a plain numeric build number (e.g. "0131").
         ' Anything else (HTML error page, captive portal, CDN error body) is
@@ -76,9 +79,12 @@ Module mUpdateChecker
         If Not Integer.TryParse(serverVersion, serverBuild) OrElse
            Not Integer.TryParse(GlobalVariables.ApplicationBuild, localBuild) Then
             Debug.WriteLine("Update check: server response is not a build number - ignoring: " & serverVersion)
+            AppLog.Write("Update", "Update check: server answer is not a build number, ignored")
             Return Nothing
         End If
 
+        AppLog.Write("Update", $"Update check: server build {serverBuild}, this build {localBuild}" &
+                               If(serverBuild > localBuild, " - newer build available", " - up to date"))
         Return If(serverBuild > localBuild, serverVersion, Nothing)
     End Function
 
@@ -154,6 +160,7 @@ Module mUpdateChecker
         ' Check up-front so the user gets a clear "missing file" message instead
         ' of a generic Win32Exception buried in the Catch below.
         If Not IO.File.Exists(updaterPath) Then
+            AppLog.Write("Update", "Cannot update: updater.exe not found at " & updaterPath)
             MessageBox.Show(
                 "Cannot install update: updater.exe was not found next to the application." & vbCrLf & vbCrLf &
                 "Expected at: " & updaterPath,
@@ -167,8 +174,10 @@ Module mUpdateChecker
                 .Arguments = ExeFileName
             }
             Process.Start(startInfo)
+            AppLog.Write("Update", "Updater started: " & updaterPath)
             Return True
         Catch ex As Exception
+            AppLog.WriteError("Update", "Updater failed to start", ex)
             MessageBox.Show("Failed to launch updater: " & ex.Message, "Update Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
             Return False
         End Try

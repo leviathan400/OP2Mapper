@@ -229,9 +229,9 @@ Public Class fTileSet
             ' Method 2: Try alternate paths
             If Not loaded Then
                 Dim alternatePaths As String() = {
-                Path.Combine(My.Settings.OP2Path, "OPU\base\tilesets", wellFilename),
-                Path.Combine(My.Settings.OP2Path, "base\tilesets", wellFilename),
-                Path.Combine(My.Settings.OP2Path, "tilesets", wellFilename)
+                Path.Combine(AppSettings.OP2Path, "OPU\base\tilesets", wellFilename),
+                Path.Combine(AppSettings.OP2Path, "base\tilesets", wellFilename),
+                Path.Combine(AppSettings.OP2Path, "tilesets", wellFilename)
             }
 
                 For Each path In alternatePaths

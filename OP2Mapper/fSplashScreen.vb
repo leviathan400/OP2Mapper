@@ -26,15 +26,9 @@ Public NotInheritable Class fSplash
             ApplicationTitle.Text = System.IO.Path.GetFileNameWithoutExtension(My.Application.Info.AssemblyName)
         End If
 
-        'Format the version information using the text set into the Version control at design time as the
-        '  formatting string.  This allows for effective localization if desired.
-        '  Build and revision information could be included by using the following code and changing the 
-        '  Version control's designtime text to "Version {0}.{1:00}.{2}.{3}" or something similar.  See
-        '  String.Format() in Help for more information.
-        '
-        '    Version.Text = System.String.Format(Version.Text, My.Application.Info.Version.Major, My.Application.Info.Version.Minor, My.Application.Info.Version.Build, My.Application.Info.Version.Revision)
-
-        Version.Text = System.String.Format(Version.Text, My.Application.Info.Version.Major, My.Application.Info.Version.Minor)
+        ' Version and build from GlobalVariables, e.g. "Version 0.7.0 (build 0152)". The
+        ' designer's "Version {0}.{1:00}" template showed 0.7.0 as "0.07", with no build.
+        Version.Text = $"Version {GlobalVariables.ApplicationVersion} (build {GlobalVariables.ApplicationBuild})"
 
         'Copyright info
         Copyright.Text = My.Application.Info.Copyright
@@ -47,6 +41,7 @@ Public NotInheritable Class fSplash
             'MsgBox("Library Files Present")
         Else
             Debug.WriteLine("Library Files Missing")
+            AppLog.Write("Start", "Required libraries missing (OP2UtilityDotNet, OP2MapJsonTools or Newtonsoft.Json) - exiting")
             MsgBox("Library Files Missing. Exiting OP2Mapper")
             End
         End If
@@ -79,6 +74,7 @@ Public NotInheritable Class fSplash
            updateCheck.Result IsNot Nothing Then
             If mUpdateChecker.LaunchUpdater() Then
                 Debug.WriteLine("Update launching — exiting app for replacement")
+                AppLog.Write("Update", "Exiting so the updater can replace OP2Mapper")
                 End
             End If
         End If

@@ -142,7 +142,7 @@ Partial Public Class fMain
     ''' <summary>
     ''' Saves a JPG of whatever the user is currently looking at in pnlMap
     ''' (current zoom, pan position, grid/coord overlays, selection rect —
-    ''' everything the panel is painting). Goes to My.Settings.WorkingPath
+    ''' everything the panel is painting). Goes to AppSettings.WorkingPath
     ''' with a timestamped filename so multiple shots don't overwrite.
     ''' Triggered by the Image → Screenshot menu item and the F12 hotkey.
     ''' </summary>
@@ -151,7 +151,7 @@ Partial Public Class fMain
         If pnlMap.ClientSize.Width <= 0 OrElse pnlMap.ClientSize.Height <= 0 Then Return
 
         ' Pick destination folder.
-        Dim folder As String = My.Settings.WorkingPath
+        Dim folder As String = AppSettings.WorkingPath
         If String.IsNullOrEmpty(folder) OrElse Not Directory.Exists(folder) Then
             folder = Application.StartupPath
         End If

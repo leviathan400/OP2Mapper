@@ -34,6 +34,7 @@ op2mapper/
     ├── fMain.Export.vb            # JPEG export and multi-mode overview image
     ├── fMain.MapAnalysis.vb       # Enclosed-area detection and fix (analysis by op2maplib)
     ├── fMain.Terrain.vb           # Terrain brush and Draw Cliff (op2maplib)
+    ├── fMain.Generate.vb          # Shows a generated map in the main view; spawn/volcano markers
     ├── fMain.Menus.vb             # Menu item handlers
     ├── fMain.UI.vb                # Labels, tile preview, resize handling
     ├── fMain.Helpers.vb           # Small shared helpers (render-mode sync, lookups)
@@ -48,6 +49,8 @@ op2mapper/
     ├── PasteTileMappings.vb       # Paste command
     ├── TileData.vb                # Tile info value type
     ├── GlobalVariables.vb         # Shared app state, constants, blank-map extraction
+    ├── AppSettings.vb             # Folder settings (OP2Path, WorkingPath, Tilegroups) in Mapper3.ini
+    ├── AppLog.vb                  # OP2Mapper.log next to the exe: start/close, crashes, updates, launcher installs, maps
     │
     │   ── Tool palettes and dialogs (shown in Edit Mode or from menus) ──
     ├── fTileSet.vb                # Tile picker (tool 1)
@@ -57,13 +60,15 @@ op2mapper/
     ├── fMiniMap.vb                # Mini-map with click-to-jump (tool 5)
     ├── fTerrain.vb                # Terrain Brush window: grounds, brush size, Draw Cliff (tool 6)
     ├── fNewMap.vb                 # New Map dialog (size, biome, name)
+    ├── fGenerateMap.vb            # Generate New Map window (op2maplib map generator)
     ├── fSettings.vb               # Paths: OP2 folder, working folder, tile groups
     ├── fSplashScreen.vb           # Splash and startup update check
     ├── fAbout.vb, fLog.vb, fBrushTool.vb (stub)
     │
     │   ── Support modules ──
     ├── ToolPalette.vb             # Tool-window positions and recent files in Mapper3.ini
-    ├── OP2Launcher.vb             # Launch Outpost 2 / open the game folder
+    ├── OP2Launcher.vb             # Launch Outpost 2 / open the game folder; installs the bundled op2launcher
+    ├── OP2Launcher/               # Bundled op2launcher.exe + Launcher.dll (embedded resources)
     └── mUpdateChecker.vb          # Version check and updater.exe hand-off
 ```
 
@@ -96,7 +101,8 @@ Main flows:
 
 - **Load:** `LoadMapFile` reads the map with OP2UtilityDotNet. It builds a `MapRenderer`, which loads the map's tilesets, then resets undo, clipboard and view state.
 - **Edit:** mouse input on the map panel creates `Command` objects. `ExecuteCommand` applies each one to `currentMap` and records it for undo; everything painted in one drag stroke is grouped into a `CompositeCommand`. The affected tiles are then invalidated and repainted.
-- **Render:** `MapPanel_Paint` asks `MapRenderer.RenderMap` for the dirty region only, clipped to the map. It then draws overlays on top: selection, paste preview, tile-group preview and the enclosed-area highlight.
+- **Render:** `MapPanel_Paint` asks `MapRenderer.RenderMap` for the dirty region only, clipped to the map. It then draws overlays on top: selection, paste preview, tile-group preview, the enclosed-area highlight, the terrain brush outline, the cliff being drawn and a generated map's spawn and volcano markers.
+- **Generate:** `fGenerateMap` runs op2maplib's generator in the background, then `ShowGeneratedMap` loads the blank template of that size and copies the result in.
 - **Save:** `WriteMapSafely` writes a temp `.map`, reads it back to check it, then atomically replaces the target.
 - **Tool palettes:** these are separate top-level forms. They talk to `fMain` through `GlobalVariables` (the active tile, cell type and tile group) and through a few public `fMain` members.
 
@@ -112,8 +118,8 @@ Description: The whole application is a WinForms UI with:
   - a scrollable, zoomable map panel
   - a property and status panel
   - File / Edit / Render / Image menus
-- **Five tool palettes**, opened when Edit Mode is enabled: tiles, cell types, tile selection, tile groups and mini-map.
-- **Dialogs:** New Map, Settings and About.
+- **Six tool palettes**, opened when Edit Mode is enabled: tiles, cell types, tile selection, tile groups, mini-map and Terrain Brush.
+- **Dialogs:** New Map, Generate New Map, Settings and About.
 
 Editing actions:
 
@@ -121,7 +127,10 @@ Editing actions:
 - paint cell types
 - copy and paste regions
 - place saved tile groups
+- paint grounds with blended transitions (Terrain Brush)
+- draw cliffs
 - auto-fix enclosed areas
+- generate a whole map from a seed
 
 Render modes, all of which can be exported as JPEG images:
 
@@ -154,7 +163,7 @@ Description:
   - paste (`PasteTileMappings.vb`)
 - `fMain.UndoRedo.vb` owns the undo and redo stacks, capped at 500 steps.
 - It also tracks the save point, so undoing back to the saved state clears the dirty flag.
-- All map edits should go through `ExecuteCommand`. The only exception is New Map's initial terrain fill, which is the starting state.
+- All map edits should go through `ExecuteCommand`. The exceptions are New Map's initial terrain fill and Generate New Map, which both create the starting state of a new map.
 
 Technologies: VB.NET; the map object comes from OP2UtilityDotNet.
 
@@ -186,7 +195,27 @@ Technologies: VB.NET, op2maplib.
 
 Deployment: In-process.
 
-#### 3.2.4. Update checker
+#### 3.2.4. op2maplib (terrain, cliffs, regions, map generator)
+
+Name: op2maplib (source: [OP2MappingLib](https://github.com/OutpostUniverse/OP2MappingLib))
+
+Description:
+
+- A C++ library with a C API, used through its .NET binding `Op2MapLib.Net.dll`. It loads `x86\op2maplib.dll` or `x64\op2maplib.dll` to match the process, and the Outpost 2 profile `op2maplib\op2.json` (grounds, transition tiles, cliff tiles, standard mapping table).
+- `fMain.Terrain.vb` (Terrain Brush and Draw Cliff) builds a `BlendMap` from the current map at the start of each stroke and applies the returned changes as undoable commands.
+- `fMain.MapAnalysis.vb` uses `MapRegions` for Find & Fix Enclosed Areas.
+- `fGenerateMap.vb` and `fMain.Generate.vb` use `MapGenSettings` / `GeneratedMap`:
+  - generation runs on a background thread;
+  - the result is copied into a freshly loaded blank template of the same size, whose mapping table is the profile's standard table, so the generated mapping indices apply unchanged;
+  - tiles, cell types and lava-possible cells are written, the bottom row is set Impassable, and the map is marked new and unsaved;
+  - spawn points and volcanoes are drawn as markers only, because `.map` files don't store them.
+- The profile is loaded once on first use (`GetTerrainProfile`). If the library or profile is missing, these features explain why and the rest of the app works.
+
+Technologies: C++17 (native), P/Invoke (.NET Framework 4.8).
+
+Deployment: Prebuilt DLLs from `..\..\other\`, copied next to the exe by the build.
+
+#### 3.2.5. Update checker
 
 Name: mUpdateChecker
 
@@ -224,11 +253,11 @@ Name: `BlankMaps\blank_WxH.map`
 
 Type: `.map` files extracted on first use from the embedded `blankmaps.zip` into a hidden `BlankMaps` folder next to the exe.
 
-Purpose: The starting point for File → New Map.
+Purpose: The starting point for File → New Map and File → Generate New Map.
 
 ### 4.3. Tile groups
 
-Name: Tile group library (`My.Settings.Tilegroups`, default `<exe>\Tilegroups`)
+Name: Tile group library (`AppSettings.Tilegroups`, default `<exe>\Tilegroups`)
 
 Type: JSON files, read and written with Newtonsoft.Json.
 
@@ -245,12 +274,14 @@ Mapping indices are only meaningful for maps with a compatible mapping table. Pl
 Name: User settings and `Mapper3.ini`
 
 Type:
-- .NET user settings (`My.Settings`)
 - an INI file next to the exe
+- .NET user settings (`My.Settings`), for one remaining option
 
 Purpose:
-- `My.Settings` holds `OP2Path`, `WorkingPath`, `Tilegroups` and `AllowEditLastRow`.
-- `Mapper3.ini` holds tool-window positions, the "always on top" flag and the recent-files list.
+- `Mapper3.ini` `[Paths]` holds the three folders, read and written through `AppSettings.vb`: `OP2Path` (Outpost 2 folder), `WorkingPath` (default map folder) and `Tilegroups`. Older versions kept them in `My.Settings`; the first read copies any value found there into the INI.
+- `Mapper3.ini` `[Window]` holds tool-window positions, the "always on top" flags, the recent-files list and tool settings such as the terrain brush size and cliff options.
+- `Mapper3.ini` `[GenerateMap]` holds the last Generate New Map settings (size, template, seed, mix, sliders, spawns, volcanoes); the feature list isn't saved.
+- `My.Settings` still holds `AllowEditLastRow`.
 
 ### 4.5. Exported images
 
@@ -270,13 +301,21 @@ Service Name: OP2MapJsonTools
 Purpose: JSON map tooling; its namespace is imported and its types are referenced for version info. Most JSON map export is currently disabled.
 Integration Method: Referenced DLL (`..\..\other\OP2MapJsonTools.dll`).
 
+Service Name: op2maplib
+Purpose: Terrain blending, cliffs, enclosed-area analysis and map generation (see 3.2.4).
+Integration Method: Referenced DLL (`..\..\other\Op2MapLib.Net.dll`) plus native DLLs and profile in `..\..\other\op2maplib\`; source in [OP2MappingLib](https://github.com/OutpostUniverse/OP2MappingLib).
+
+Service Name: OP2Launcher
+Purpose: Starting Outpost 2 into the DLL picker.
+Integration Method: `op2launcher.exe` and `Launcher.dll` are embedded resources, installed into `<OP2Path>\OPU` when first needed; an MD5 compare decides whether an installed copy differs, and the user is asked before it's replaced.
+
 Service Name: Newtonsoft.Json
 Purpose: Tile-group JSON.
 Integration Method: NuGet package (`packages.config`, restored to `..\packages`).
 
 Service Name: Outpost 2 installation
 Purpose: Tileset BMPs for rendering; launching the game.
-Integration Method: File system under `My.Settings.OP2Path`. The game is launched through `OPU\OPULauncher.exe` or `OPU\op2launcher.exe` (`OP2Launcher.vb`).
+Integration Method: File system under `AppSettings.OP2Path`. The game is launched through `OPU\OPULauncher.exe` or `OPU\op2launcher.exe` (`OP2Launcher.vb`).
 
 Service Name: Update server (`update.outpostuniverse.org`)
 Purpose: The latest build number.
@@ -302,7 +341,8 @@ CI/CD Pipeline:
 
 Monitoring & Logging:
 - There is no telemetry.
-- Diagnostics use `Debug.WriteLine`, which is visible in the Visual Studio Output window.
+- `OP2Mapper.log` next to the exe (`AppLog.vb`) records starts and closes, crashes, update checks, launcher installs, folder changes, maps opened and saved, and generated maps. It rolls over at 1 MB to `OP2Mapper.old.log`.
+- Other diagnostics use `Debug.WriteLine`, which is visible in the Visual Studio Output window.
 - User-facing errors appear as message boxes.
 - `fLog` is a placeholder log window.
 
@@ -358,20 +398,19 @@ See [ROADMAP.md](ROADMAP.md) for the full plan. Architecturally significant item
 - localization
 
 **Significant upcoming features**
-- smart brushes and terrain-aware painting
 - cell-type and pathing tools
 - map inspection and diff
 - a "Test in OP2" game integration
 
 ## 10. Project Identification
 
-Project Name: OP2Mapper3 (assembly `OP2Mapper`, version 0.7.0, build 0150)
+Project Name: OP2Mapper3 (assembly `OP2Mapper`, version 0.7.1, build 0155)
 
 Repository URL: https://github.com/leviathan400/OP2Mapper
 
 Primary Contact/Team: leviathan (Outpost Universe)
 
-Date of Last Update: 2026-11-12
+Date of Last Update: 2026-11-23
 
 ## 11. Glossary / Acronyms
 
