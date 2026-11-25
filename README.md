@@ -100,8 +100,11 @@ Settings and window positions are saved in `Mapper3.ini` next to the program.
   - `Op2MapLib.Net.dll`, plus op2maplib's native DLLs and profile in
     `other\op2maplib\` (`x86\`, `x64\` and `op2.json`). op2maplib's source is
     [OP2MappingLib](https://github.com/OutpostUniverse/OP2MappingLib).
-  - Copies of all of these are in `ci/deps`, which the GitHub Actions build
-    copies to `..\other`.
+- **op2maplib source** is included as a git submodule at `lib/OP2MappingLib`,
+  pinned to the version OP2Mapper uses. Clone with `git clone --recurse-submodules`,
+  or run `git submodule update --init` after cloning. The local build still uses
+  the prebuilt files in `..\other`; the GitHub Actions build compiles op2maplib
+  from the submodule and takes the other two DLLs from `ci/deps`.
 - **NuGet:** restore Newtonsoft.Json 13.0.4, then build `OP2Mapper.sln`.
 
 [ARCHITECTURE.md](ARCHITECTURE.md) describes the code, and

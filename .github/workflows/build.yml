@@ -1,9 +1,13 @@
 # Builds OP2Mapper on every push and pull request.
 #
 # The project references prebuilt libraries from a folder named "other" next
-# to the repository (..\other). On the runner that folder is filled from
-# ci/deps, so the project file is used unchanged. Newtonsoft.Json comes from
-# NuGet (packages.config).
+# to the repository (..\other). On the runner that folder is filled with:
+#   - op2maplib, built from source from the lib/OP2MappingLib submodule
+#     (native x86 and x64 DLLs with their C++ tests, the .NET binding
+#     Op2MapLib.Net.dll and the profile op2maplib\op2.json);
+#   - OP2UtilityDotNet.dll and OP2MapJsonTools.dll, copied from ci/deps.
+# The project file is used unchanged. Newtonsoft.Json comes from NuGet
+# (packages.config).
 #
 # Both configurations are built: Debug (output ..\build, as on a developer
 # machine) and Release (OP2Mapper\bin\Release). The Release build is uploaded
@@ -24,16 +28,33 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - uses: microsoft/setup-msbuild@v2
 
-      - name: Provide ..\other from ci\deps
+      - name: Build op2maplib from the submodule
+        shell: pwsh
+        run: |
+          # Native DLLs for both architectures, with the library's C++ tests.
+          & lib/OP2MappingLib/tools/build-native.ps1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # .NET binding; its output also holds x86\, x64\ and op2maplib\op2.json.
+          $out = Join-Path $env:RUNNER_TEMP 'op2maplib'
+          msbuild lib/OP2MappingLib/bindings/dotnet/Op2MapLib.Net.csproj -p:Configuration=Release "-p:OutDir=$out\" -v:m -nologo
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Provide ..\other
         shell: pwsh
         run: |
           $other = Join-Path (Split-Path $env:GITHUB_WORKSPACE -Parent) 'other'
-          New-Item -ItemType Directory -Force $other | Out-Null
-          Copy-Item ci\deps\* $other -Recurse -Force -Exclude README.md
-          Get-ChildItem $other -Recurse -File | ForEach-Object { $_.FullName }
+          $out = Join-Path $env:RUNNER_TEMP 'op2maplib'
+          New-Item -ItemType Directory -Force (Join-Path $other 'op2maplib') | Out-Null
+          Copy-Item ci\deps\*.dll $other -Force
+          Copy-Item (Join-Path $out 'Op2MapLib.Net.dll') $other -Force
+          Copy-Item (Join-Path $out 'x86'), (Join-Path $out 'x64') (Join-Path $other 'op2maplib') -Recurse -Force
+          Copy-Item (Join-Path $out 'op2maplib\op2.json') (Join-Path $other 'op2maplib') -Force
+          Get-ChildItem $other -Recurse -File | ForEach-Object { '{0}  {1}' -f $_.FullName, $_.VersionInfo.FileVersion }
 
       - name: Restore NuGet packages
         run: msbuild OP2Mapper.sln -t:Restore -p:RestorePackagesConfig=true -v:m

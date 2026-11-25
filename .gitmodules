@@ -1,0 +1,3 @@
+[submodule "lib/OP2MappingLib"]
+	path = lib/OP2MappingLib
+	url = https://github.com/OutpostUniverse/OP2MappingLib.git

@@ -303,7 +303,7 @@ Integration Method: Referenced DLL (`..\..\other\OP2MapJsonTools.dll`).
 
 Service Name: op2maplib
 Purpose: Terrain blending, cliffs, enclosed-area analysis and map generation (see 3.2.4).
-Integration Method: Referenced DLL (`..\..\other\Op2MapLib.Net.dll`) plus native DLLs and profile in `..\..\other\op2maplib\`; source in [OP2MappingLib](https://github.com/OutpostUniverse/OP2MappingLib).
+Integration Method: Referenced DLL (`..\..\other\Op2MapLib.Net.dll`) plus native DLLs and profile in `..\..\other\op2maplib\`; source in [OP2MappingLib](https://github.com/OutpostUniverse/OP2MappingLib), included in the GitHub repository as the submodule `lib/OP2MappingLib` (used by CI).
 
 Service Name: OP2Launcher
 Purpose: Starting Outpost 2 into the DLL picker.
@@ -334,7 +334,7 @@ Key Services Used:
 - the Outpost 2 install on the user's machine
 
 CI/CD Pipeline:
-- GitHub Actions (`.github/workflows/build.yml`) builds Debug and Release on every push and pull request, on `windows-latest`. It copies `ci/deps` (prebuilt OP2UtilityDotNet, OP2MapJsonTools and op2maplib) to `..\other`, restores NuGet, and uploads the Release build as an artifact. Keep `ci/deps` in step with `..\other` when a library is updated.
+- GitHub Actions (`.github/workflows/build.yml`) builds Debug and Release on every push and pull request, on `windows-latest`. It builds op2maplib from source from the `lib/OP2MappingLib` git submodule (native x86 and x64 DLLs with the library's C++ tests, plus `Op2MapLib.Net.dll`), copies those and the prebuilt OP2UtilityDotNet and OP2MapJsonTools from `ci/deps` to `..\other`, restores NuGet, and uploads the Release build as an artifact. When a library is updated in `..\other`, also move the submodule pin (op2maplib) or update `ci/deps` (the other two).
 - Release builds for users are made locally with Visual Studio 2022 or MSBuild.
 - Debug builds go to `..\..\build\`; Release builds go to `bin\Release\`.
 - Builds are published by updating the version file on the update server.
