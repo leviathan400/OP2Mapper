@@ -334,8 +334,8 @@ Key Services Used:
 - the Outpost 2 install on the user's machine
 
 CI/CD Pipeline:
-- There is no automated pipeline.
-- Builds are made locally with Visual Studio 2022 or MSBuild.
+- GitHub Actions (`.github/workflows/build.yml`) builds Debug and Release on every push and pull request, on `windows-latest`. It copies `ci/deps` (prebuilt OP2UtilityDotNet, OP2MapJsonTools and op2maplib) to `..\other`, restores NuGet, and uploads the Release build as an artifact. Keep `ci/deps` in step with `..\other` when a library is updated.
+- Release builds for users are made locally with Visual Studio 2022 or MSBuild.
 - Debug builds go to `..\..\build\`; Release builds go to `bin\Release\`.
 - Builds are published by updating the version file on the update server.
 

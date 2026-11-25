@@ -1,0 +1,54 @@
+# Builds OP2Mapper on every push and pull request.
+#
+# The project references prebuilt libraries from a folder named "other" next
+# to the repository (..\other). On the runner that folder is filled from
+# ci/deps, so the project file is used unchanged. Newtonsoft.Json comes from
+# NuGet (packages.config).
+#
+# Both configurations are built: Debug (output ..\build, as on a developer
+# machine) and Release (OP2Mapper\bin\Release). The Release build is uploaded
+# as an artifact.
+
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: microsoft/setup-msbuild@v2
+
+      - name: Provide ..\other from ci\deps
+        shell: pwsh
+        run: |
+          $other = Join-Path (Split-Path $env:GITHUB_WORKSPACE -Parent) 'other'
+          New-Item -ItemType Directory -Force $other | Out-Null
+          Copy-Item ci\deps\* $other -Recurse -Force -Exclude README.md
+          Get-ChildItem $other -Recurse -File | ForEach-Object { $_.FullName }
+
+      - name: Restore NuGet packages
+        run: msbuild OP2Mapper.sln -t:Restore -p:RestorePackagesConfig=true -v:m
+
+      - name: Build Debug
+        run: msbuild OP2Mapper.sln -p:Configuration=Debug -v:m -nologo
+
+      - name: Build Release
+        run: msbuild OP2Mapper.sln -p:Configuration=Release -v:m -nologo
+
+      - name: Upload Release build
+        uses: actions/upload-artifact@v4
+        with:
+          name: OP2Mapper-Release
+          path: |
+            OP2Mapper/bin/Release/
+            !OP2Mapper/bin/Release/**/*.pdb
+          if-no-files-found: error

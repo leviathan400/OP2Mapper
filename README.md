@@ -1,5 +1,7 @@
 # OP2Mapper3
 
+[![Build](https://github.com/leviathan400/OP2Mapper/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/leviathan400/OP2Mapper/actions/workflows/build.yml)
+
 ![Screenshot](https://images.outpostuniverse.org/OP2Mapper3.png)
 
 OP2Mapper3 is a modern map editor for **Outpost 2: Divided Destiny**. It opens
@@ -98,6 +100,8 @@ Settings and window positions are saved in `Mapper3.ini` next to the program.
   - `Op2MapLib.Net.dll`, plus op2maplib's native DLLs and profile in
     `other\op2maplib\` (`x86\`, `x64\` and `op2.json`). op2maplib's source is
     [OP2MappingLib](https://github.com/OutpostUniverse/OP2MappingLib).
+  - Copies of all of these are in `ci/deps`, which the GitHub Actions build
+    copies to `..\other`.
 - **NuGet:** restore Newtonsoft.Json 13.0.4, then build `OP2Mapper.sln`.
 
 [ARCHITECTURE.md](ARCHITECTURE.md) describes the code, and
