@@ -404,13 +404,13 @@ See [ROADMAP.md](ROADMAP.md) for the full plan. Architecturally significant item
 
 ## 10. Project Identification
 
-Project Name: OP2Mapper3 (assembly `OP2Mapper`, version 0.7.1, build 0155)
+Project Name: OP2Mapper3 (assembly `OP2Mapper`, version 0.7.2, build 0155)
 
 Repository URL: https://github.com/leviathan400/OP2Mapper
 
 Primary Contact/Team: leviathan (Outpost Universe)
 
-Date of Last Update: 2026-11-23
+Date of Last Update: 2026-11-25
 
 ## 11. Glossary / Acronyms
 

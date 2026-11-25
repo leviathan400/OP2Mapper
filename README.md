@@ -8,7 +8,7 @@ OP2Mapper3 is a modern map editor for **Outpost 2: Divided Destiny**. It opens
 and saves the game's `.map` files and lets you edit their tiles and cell types,
 with painting tools that understand the game's terrain.
 
-**Current version: 0.7.1.** Downloads are on the [Releases](https://github.com/leviathan400/OP2Mapper/releases) page, and the [changelog](CHANGELOG.md) lists every change.
+**Current version: 0.7.2.** Downloads are on the [Releases](https://github.com/leviathan400/OP2Mapper/releases) page, and the [changelog](CHANGELOG.md) lists every change.
 
 ## Features
 

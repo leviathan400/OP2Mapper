@@ -5,7 +5,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-Current release: 0.7.1 (build 0155).
+Current release: 0.7.2 (build 0155).
 
 ### Added
 - **Generate New Map (File menu, Ctrl+Shift+N).** Builds a whole map from a seed with op2maplib's map generator.

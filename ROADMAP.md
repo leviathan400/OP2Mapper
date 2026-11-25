@@ -4,7 +4,7 @@ A living document covering current state and planned features.
 
 ---
 
-## Part 1: What it has today (v0.7.1)
+## Part 1: What it has today (v0.7.2)
 
 ### Map operations
 - **Open / Save / New** `.map` files with 10 embedded blank-map templates (64×64 up to 512×256)
