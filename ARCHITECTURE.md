@@ -295,7 +295,7 @@ Purpose: Map previews for sharing. They are written through a temp file, so a fa
 
 Service Name: OP2UtilityDotNet
 Purpose: Reading and writing `.map` files (`Map`, `CellType`, `ResourceManager`).
-Integration Method: Referenced DLL (`..\..\other\OP2UtilityDotNet.dll`); source in the separate OP2UtilityDotNet project.
+Integration Method: Referenced DLL (`..\..\other\OP2UtilityDotNet.dll`); source in [OP2UtilityDotNet](https://github.com/leviathan400/OP2UtilityDotNet), included in the GitHub repository as the submodule `lib/OP2UtilityDotNet` (used by CI).
 
 Service Name: OP2MapJsonTools
 Purpose: JSON map tooling; its namespace is imported and its types are referenced for version info. Most JSON map export is currently disabled.
@@ -334,7 +334,7 @@ Key Services Used:
 - the Outpost 2 install on the user's machine
 
 CI/CD Pipeline:
-- GitHub Actions (`.github/workflows/build.yml`) builds Debug and Release on every push and pull request, on `windows-latest`. It builds op2maplib from source from the `lib/OP2MappingLib` git submodule (native x86 and x64 DLLs with the library's C++ tests, plus `Op2MapLib.Net.dll`), copies those and the prebuilt OP2UtilityDotNet and OP2MapJsonTools from `ci/deps` to `..\other`, restores NuGet, and uploads the Release build as an artifact. When a library is updated in `..\other`, also move the submodule pin (op2maplib) or update `ci/deps` (the other two).
+- GitHub Actions (`.github/workflows/build.yml`) builds Debug and Release on every push and pull request, on `windows-latest`. It builds op2maplib (native x86 and x64 DLLs with the library's C++ tests, plus `Op2MapLib.Net.dll`) and OP2UtilityDotNet from source from the `lib/OP2MappingLib` and `lib/OP2UtilityDotNet` git submodules, copies those and the prebuilt OP2MapJsonTools from `ci/deps` to `..\other`, restores NuGet, and uploads the Release build as an artifact. When a library is updated in `..\other`, also move its submodule pin (or update `ci/deps` for OP2MapJsonTools).
 - Release builds for users are made locally with Visual Studio 2022 or MSBuild.
 - Debug builds go to `..\..\build\`; Release builds go to `bin\Release\`.
 - Builds are published by updating the version file on the update server.

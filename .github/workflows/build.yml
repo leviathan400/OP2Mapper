@@ -5,7 +5,9 @@
 #   - op2maplib, built from source from the lib/OP2MappingLib submodule
 #     (native x86 and x64 DLLs with their C++ tests, the .NET binding
 #     Op2MapLib.Net.dll and the profile op2maplib\op2.json);
-#   - OP2UtilityDotNet.dll and OP2MapJsonTools.dll, copied from ci/deps.
+#   - OP2UtilityDotNet.dll, built from source from the lib/OP2UtilityDotNet
+#     submodule;
+#   - OP2MapJsonTools.dll, copied from ci/deps.
 # The project file is used unchanged. Newtonsoft.Json comes from NuGet
 # (packages.config).
 #
@@ -44,6 +46,12 @@ jobs:
           msbuild lib/OP2MappingLib/bindings/dotnet/Op2MapLib.Net.csproj -p:Configuration=Release "-p:OutDir=$out\" -v:m -nologo
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
+      - name: Build OP2UtilityDotNet from the submodule
+        shell: pwsh
+        run: |
+          dotnet build lib/OP2UtilityDotNet/OP2UtilityDotNet/OP2UtilityDotNet.csproj -c Release -o (Join-Path $env:RUNNER_TEMP 'op2utility') -nologo
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
       - name: Provide ..\other
         shell: pwsh
         run: |
@@ -52,6 +60,7 @@ jobs:
           New-Item -ItemType Directory -Force (Join-Path $other 'op2maplib') | Out-Null
           Copy-Item ci\deps\*.dll $other -Force
           Copy-Item (Join-Path $out 'Op2MapLib.Net.dll') $other -Force
+          Copy-Item (Join-Path $env:RUNNER_TEMP 'op2utility\OP2UtilityDotNet.dll') $other -Force
           Copy-Item (Join-Path $out 'x86'), (Join-Path $out 'x64') (Join-Path $other 'op2maplib') -Recurse -Force
           Copy-Item (Join-Path $out 'op2maplib\op2.json') (Join-Path $other 'op2maplib') -Force
           Get-ChildItem $other -Recurse -File | ForEach-Object { '{0}  {1}' -f $_.FullName, $_.VersionInfo.FileVersion }

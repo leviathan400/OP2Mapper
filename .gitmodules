@@ -1,3 +1,6 @@
 [submodule "lib/OP2MappingLib"]
 	path = lib/OP2MappingLib
 	url = https://github.com/OutpostUniverse/OP2MappingLib.git
+[submodule "lib/OP2UtilityDotNet"]
+	path = lib/OP2UtilityDotNet
+	url = https://github.com/leviathan400/OP2UtilityDotNet.git
