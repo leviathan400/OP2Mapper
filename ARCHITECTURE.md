@@ -210,6 +210,7 @@ Description:
   - tiles, cell types and lava-possible cells are written, the bottom row is set Impassable, and the map is marked new and unsaved;
   - spawn points and volcanoes are drawn as markers only, because `.map` files don't store them.
 - The profile is loaded once on first use (`GetTerrainProfile`). If the library or profile is missing, these features explain why and the rest of the app works.
+- Version used: op2maplib 0.3.5. Since 0.3.5 the library also has mountains, gorges, valleys and plateaus, and a "learned" generator modelled on the original maps (`LearnedModel`, network weights in `profiles/op2-net.bin`, 4.5 MB). OP2Mapper doesn't use these yet: `op2-net.bin` isn't shipped, and the learned generator doesn't use the Features list.
 
 Technologies: C++17 (native), P/Invoke (.NET Framework 4.8).
 
@@ -404,7 +405,7 @@ See [ROADMAP.md](ROADMAP.md) for the full plan. Architecturally significant item
 
 ## 10. Project Identification
 
-Project Name: OP2Mapper3 (assembly `OP2Mapper`, version 0.7.2, build 0155)
+Project Name: OP2Mapper3 (assembly `OP2Mapper`, version 0.7.2, build 0156)
 
 Repository URL: https://github.com/leviathan400/OP2Mapper
 

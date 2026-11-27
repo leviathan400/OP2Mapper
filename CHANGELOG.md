@@ -5,7 +5,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-Current release: 0.7.2 (build 0155).
+Current release: 0.7.2 (build 0156).
 
 ### Added
 - **Generate New Map (File menu, Ctrl+Shift+N).** Builds a whole map from a seed with op2maplib's map generator.
@@ -123,3 +123,4 @@ Current release: 0.7.2 (build 0155).
 - **Tidier sidebar, with a list of the map's tilesets.** The main window's sidebar is now grouped into titled sections: Map, Tilesets, Tile Under Cursor, View and Editing. The new Tilesets section lists every tileset BMP the loaded map uses, with its tile count. The section title gives the total and flags any tileset that couldn't be found. Long text ends in "…" and shows in full on hover, and the sidebar scrolls if the window is too short.
 - A paint drag stops at the locked bottom row instead of continuing past it.
 - At low zoom, the "Cell Type Overlay All" mode shows the colour overlay instead of unreadable labels.
+- **op2maplib updated to 0.3.5.** Maps generated with the same settings and seed are unchanged.

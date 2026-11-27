@@ -21,7 +21,7 @@ Module GlobalVariables
     ' Application info
 
     ''' <summary>Build number string shown in the About/title info.</summary>
-    Public Const ApplicationBuild As String = "0155"
+    Public Const ApplicationBuild As String = "0156"
     ''' <summary>Application version string shown in the About/title info.</summary>
     Public Const ApplicationVersion As String = "0.7.2"
     ''' <summary>Application name used in titles and messages.</summary>

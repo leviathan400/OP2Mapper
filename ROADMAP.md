@@ -118,6 +118,7 @@ OP2 cell types control vehicle pathing. There's a real game-design opportunity h
 | Feature | Effort | Why |
 |---|---|---|
 | ~~**Procedural terrain generation**~~ — **done in 0.7.1: Generate New Map** (op2maplib map generator) | L | — |
+| **Generate New Map: mountains and the learned generator** — op2maplib 0.3.5 adds mountains, gorges, valleys and plateaus, and a generator modelled on the original maps. Needs `op2-net.bin` (4.5 MB) shipped, its settings in the window, a progress bar and Cancel (it takes much longer), and the Features list hidden in learned mode | M | Maps that look like the originals |
 | **Lua scripting console** — run user scripts that walk the map (place tiles, paint cell types, generate features) | L | Power users can do anything; no other OP2 editor has this |
 | **Plugin system** — load `.dll` files that extend the menu, add render modes, or add brushes | XL | Long-term extensibility |
 | **Macros** — record a sequence of edits, replay anywhere | M | Mini-scripting without code |
